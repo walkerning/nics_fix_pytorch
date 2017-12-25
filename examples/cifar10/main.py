@@ -65,7 +65,6 @@ parser.add_argument('--save-dir', dest='save_dir',
                     help='The directory used to save the trained models',
                     default='save_temp', type=str)
 
-print(parser)
 best_prec1 = 90
 start = time.time()
 
@@ -83,6 +82,7 @@ def main():
     model = vgg.__dict__[args.arch]()
     for module in model.modules():
         print(module)
+    model.print_fix_configs()
 
     # model.features = torch.nn.DataParallel(model.features)
     model.cuda()
