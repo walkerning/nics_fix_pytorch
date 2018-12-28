@@ -20,8 +20,12 @@ PACKAGES = find_packages(exclude=["tests.*", "tests"])
 
 # dependencies
 INSTALL_REQUIRES = [
+    "six==1.11.0",
+    "numpy"
 ]
 TESTS_REQUIRE = [
+    "pytest",
+    "pytest-cov",
 ]
 
 # entry points
@@ -37,11 +41,11 @@ def read_long_description(filename):
 class PyTest(TestCommand):
     def finalize_options(self):
         TestCommand.finalize_options(self)
-        self.test_args = ['tests/', '--junitxml', 'unittest.xml']
+        self.test_args = ["tests/", "--junitxml", "unittest.xml", "--cov"]
         self.test_suite = True
 
     def run_tests(self):
-        # import here, cause outside the eggs aren't loaded
+        # import here, cause outside the eggs aren"t loaded
         import pytest
         errno = pytest.main(self.test_args)
         sys.exit(errno)
@@ -61,5 +65,5 @@ setup(
     zip_safe=True,
     install_requires=INSTALL_REQUIRES,
     tests_require=TESTS_REQUIRE,
-    cmdclass={'test': PyTest},
+    cmdclass={"test": PyTest},
 )

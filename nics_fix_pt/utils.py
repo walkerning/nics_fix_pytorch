@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import six
 import copy
 import inspect
 from functools import wraps
@@ -16,13 +17,12 @@ def try_parse_int(something):
 def cache(format_str):
     def _cache(func):
         _cache_dct = {}
-        argspec = inspect.getargspec(func)
-        default_kwargs = dict(zip(argspec.args[len(argspec.args) - len(argspec.defaults):],
-                                  argspec.defaults))
+        sig = inspect.signature(func)
+        default_kwargs = {n: v.default for n, v in six.iteritems(sig.parameters) if v.default != inspect._empty}
         @wraps(func)
         def _func(*args, **kwargs):
             args_dct = copy.copy(default_kwargs)
-            args_dct.update(dict(zip(argspec.args, args)))
+            args_dct.update(dict(zip(sig.keys(), args)))
             args_dct.update(kwargs)
             cache_str = format_str.format(**args_dct)
             if cache_str not in _cache_dct:
