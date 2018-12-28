@@ -45,7 +45,7 @@ def quantitize_cfg(data, scale, bitwidth, method):
         method_v = int(method)
 
     if method_v == FIX_NONE:
-        return data
+        return data, None
     elif method_v == FIX_AUTO:
         EPS = 1e-5
         new_scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(data)), torch.FloatTensor(1).fill_(EPS))) / np.log(2.))
@@ -66,25 +66,36 @@ class StraightThroughRound(torch.autograd.Function):
 
 class QuantitizeGradient(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x):
+    def forward(ctx, x, scale, bitwidth, method):
+        # FIXME: save the tensor/variables for backward, maybe should use `ctx.save_for_backward` for standard practice,
+        # but `save_for_backward` requires scale/bitwidth/method all being of type `Variable`...
+        ctx.saved = (scale, bitwidth, method)
         return x
+
     @staticmethod
     def backward(ctx, g):
-        return quantitize_cfg(g)
+        return quantitize_cfg(g, *ctx.saved)[0], None, None, None
 
 def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
+    # fix_cfg/fix_grad_cfg is the configuration saved;
+    # kwarg_cfg is the overriding configuration supplied for each `forward` call
     data_cfg = copy.copy(fix_cfg)
     data_cfg.update(kwarg_cfg.get(name + "_fix", {}))
     grad_cfg = copy.copy(fix_grad_cfg)
     grad_cfg.update(kwarg_cfg.get(name + "_grad_fix", {}))
     method = data_cfg.get("method", FIX_NONE)
+
     step = 0
+    # quantitize data
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
         param, step = quantitize_cfg(param, data_cfg["scale"],
-                               data_cfg["bitwidth"], data_cfg["method"])
-    # TODO: quantitize gradient
-    # method = grad_cfg.get("method", FIX_NONE) 
-    # if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
-    #     param, step = quantitize_cfg(param, grad_cfg["scale"],
-    #                            grad_cfg["bitwidth"], grad_cfg["method"])
+                                     data_cfg["bitwidth"], data_cfg["method"])
+
+    # quantitize gradient
+    method = grad_cfg.get("method", FIX_NONE) 
+    if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
+        param = QuantitizeGradient().apply(param, grad_cfg["scale"],
+                                                   grad_cfg["bitwidth"], grad_cfg["method"])
+
+    # NOTE: the returned step is data fix stepsize, not gradient fix step size;
     return param, step
