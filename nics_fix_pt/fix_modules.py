@@ -13,7 +13,7 @@ from . import nn_fix, utils
 def fix_forward(self, input, **kwargs):
     if not isinstance(input, dict):
         input = {"input": input}
-    for n, param in self._parameters.iteritems():
+    for n, param in six.iteritems(self._parameters):
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
         object.__setattr__(self, n, quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n))
@@ -64,7 +64,7 @@ class FixTopModule(Module):
     @utils.cache("{grad}")
     def get_fix_configs(self, grad=False):
         cfg_dct = OrderedDict()
-        for name, module in self._modules.iteritems():
+        for name, module in six.iteritems(self._modules):
             if isinstance(module, FixTopModule):
                 cfg_dct[name] = module.get_fix_configs(method, grad=grad)
             elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
@@ -101,7 +101,7 @@ class FixTopModule(Module):
                                                                                                         d_mt=d_mt, g_mt=g_mt))
 
     def set_fix_method(self, method, grad=False):
-        for module in self._modules.itervalues():
+        for module in six.itervalues(self._modules):
             if isinstance(module, FixTopModule):
                 module.set_fix_method(method, grad=grad)
             elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
