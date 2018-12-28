@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import argparse
+import yaml
 
 import numpy as np
 import torch
@@ -21,8 +22,8 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='N',
                     help='input batch size for training (default: 64)')
 parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                     help='input batch size for testing (default: 1000)')
-parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                    help='number of epochs to train (default: 10)')
+parser.add_argument('--epochs', type=int, default=1, metavar='N',
+                    help='number of epochs to train (default: 1)')
 parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
@@ -91,8 +92,8 @@ if args.cuda:
 
 optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
-def train(epoch):
-    model.set_fix_method(nfp.FIX_AUTO)
+def train(epoch, fix_method=nfp.FIX_AUTO):
+    model.set_fix_method(fix_method)
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         if args.cuda:
@@ -109,8 +110,8 @@ def train(epoch):
                 100. * batch_idx / len(train_loader), loss.data.item()), end="")
     print("")
 
-def test():
-    model.set_fix_method(nfp.FIX_FIXED)
+def test(fix_method=nfp.FIX_FIXED):
+    model.set_fix_method(fix_method)
     model.eval()
     test_loss = 0
     correct = 0
@@ -129,9 +130,26 @@ def test():
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
-
 for epoch in range(1, args.epochs + 1):
     train(epoch)
     test()
 
 model.print_fix_configs()
+fix_cfg = {
+    "data": model.get_fix_configs(data_only=True),
+    "grad": model.get_fix_configs(grad=True, data_only=True)
+}
+with open("mnist_fix_config.yaml", "w") as wf:
+    yaml.dump(fix_cfg, wf, default_flow_style=False)
+
+# Let's try float test
+print("test float: ", end="")
+test(nfp.FIX_NONE) # after 1 epoch: 9174/10000 92%
+
+# Let's load the fix config again, and test it using FIX_FIXED
+print("load from the yaml config and test fixed again: ", end="")
+with open("mnist_fix_config.yaml", "r") as rf:
+    fix_cfg = yaml.load(rf)
+    model.load_fix_configs(fix_cfg["data"])
+    model.load_fix_configs(fix_cfg["grad"], grad=True)
+    test(nfp.FIX_FIXED) # after 1 epoch: 8852/10000 89%

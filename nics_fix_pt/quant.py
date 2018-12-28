@@ -14,9 +14,9 @@ def _do_quantitize(data, scale, bit_width):
     # print(scale_f)
     step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False), (scale_f - (bit_width - 1).float()))
     minimum = -torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False), scale_f)
-    if data.is_cuda:
-        step = step.cuda()
-        minimum = minimum.cuda()
+    step = step.to(data.device)
+    minimum = minimum.to(data.device)
+
     # maximum = -minimum - step
     maximum = -minimum
     # TODO: Even if the quantitize cfg is "auto", some overflow may occur, and maybe cause some problems.
@@ -48,7 +48,7 @@ def quantitize_cfg(data, scale, bitwidth, method):
         return data, None
     elif method_v == FIX_AUTO:
         EPS = 1e-5
-        new_scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(data)), torch.FloatTensor(1).fill_(EPS))) / np.log(2.))
+        new_scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(data)), torch.tensor(EPS).float().to(data.device))) / np.log(2.))
         scale.data.numpy()[0] = new_scale
         return _do_quantitize(data, scale, bitwidth)
     elif method_v == FIX_FIXED:
@@ -96,6 +96,7 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
         param = QuantitizeGradient().apply(param, grad_cfg["scale"],
                                                    grad_cfg["bitwidth"], grad_cfg["method"])
-
+    param.data_cfg = data_cfg
+    param.grad_cfg = grad_cfg
     # NOTE: the returned step is data fix stepsize, not gradient fix step size;
     return param, step

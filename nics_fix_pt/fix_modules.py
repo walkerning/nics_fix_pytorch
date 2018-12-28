@@ -63,14 +63,23 @@ class FixTopModule(Module):
     A module with some simple fix configuration manage utilities.
     """
 
-    @utils.cache("{grad}")
-    def get_fix_configs(self, grad=False):
+    def load_fix_configs(self, cfgs, grad=False):
+        assert isinstance(cfgs, (OrderedDict, dict))
+        for name, module in six.iteritems(self._modules):
+            if isinstance(module, FixTopModule):
+                module.load_fix_config(cfgs[name], grad=grad)
+            elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
+                setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
+
+    def get_fix_configs(self, grad=False, data_only=False):
         cfg_dct = OrderedDict()
         for name, module in six.iteritems(self._modules):
             if isinstance(module, FixTopModule):
                 cfg_dct[name] = module.get_fix_configs(method, grad=grad)
             elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 cfg_dct[name] = getattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad")
+                if data_only:
+                    cfg_dct[name] = utils.try_parse_int(cfg_dct[name])
         return cfg_dct
         
     def print_fix_configs(self, data_fix_cfg=None, grad_fix_cfg=None, prefix_spaces=0):
@@ -108,20 +117,15 @@ class FixTopModule(Module):
                 module.set_fix_method(method, grad=grad)
             elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 fix_params = getattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad")
-                if isinstance(module.__class__, FixMeta):
-                    names = ["weight", "bias"]
-                else:
-                    names = ["activation"]
-                for n in names:
-                    if n in fix_params:
-                        if "method" in fix_params[n]:
-                            ori_method = fix_params[n]["method"]
-                            if isinstance(ori_method, torch.autograd.Variable):
-                                ori_method.data.numpy()[0] = method
-                            elif torch.is_tensor(ori_method):
-                                ori_method.numpy()[0] = method
-                            else:
-                                print("WARINING: setting a config field that is not a Tensor/variable might be of no use...")
+                for n in fix_params:
+                    if "method" in fix_params[n]:
+                        ori_method = fix_params[n]["method"]
+                        if isinstance(ori_method, torch.autograd.Variable):
+                            ori_method.data.numpy()[0] = method
+                        elif torch.is_tensor(ori_method):
+                            ori_method.numpy()[0] = method
+                        else:
+                            fix_params[n]["method"] = method
                 
 nn_fix.Activation_fix = Activation_fix
 nn_fix.FixTopModule = FixTopModule
