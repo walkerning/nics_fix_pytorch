@@ -24,7 +24,7 @@ def _do_quantitize(data, scale, bit_width):
     # * Do not minus step at maximum when training on software, 
     #   this may cause some small discrepancy between software simulation and actual hardware deployment.
     # * Modify the `new_scale` calculation.
-    return torch.min(torch.max(StraightThroughRound.apply(data / step) * step, minimum), maximum)
+    return torch.min(torch.max(StraightThroughRound.apply(data / step) * step, minimum), maximum), step
 
 # quantitze methods
 FIX_NONE = 0
@@ -76,12 +76,13 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     data_cfg.update(kwarg_cfg.get(name + "_fix", {}))
     grad_cfg = copy.copy(fix_grad_cfg)
     grad_cfg.update(kwarg_cfg.get(name + "_grad_fix", {}))
-    method = data_cfg.get("method", FIX_NONE) 
+    method = data_cfg.get("method", FIX_NONE)
+    step = 0
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
-        param = quantitize_cfg(param, data_cfg["scale"],
+        param, step = quantitize_cfg(param, data_cfg["scale"],
                                data_cfg["bitwidth"], data_cfg["method"])
     method = grad_cfg.get("method", FIX_NONE) 
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
-        param = quantitize_cfg(param, grad_cfg["scale"],
+        param, step = quantitize_cfg(param, grad_cfg["scale"],
                                grad_cfg["bitwidth"], grad_cfg["method"])
-    return param
+    return param, step

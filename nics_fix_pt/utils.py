@@ -4,6 +4,9 @@ import copy
 import inspect
 from functools import wraps
 
+import numpy as np
+import torch
+
 def try_parse_int(something):
     try:
         return int(something)
@@ -27,3 +30,10 @@ def cache(format_str):
             return _cache_dct[cache_str]
         return _func
     return _cache
+
+def _generate_default_fix_cfg(names, scale=0, bitwidth=8, method=0):
+    return {n: {
+        "method": torch.autograd.Variable(torch.IntTensor(np.array([method])), requires_grad=False),
+        "scale": torch.autograd.Variable(torch.IntTensor(np.array([scale])), requires_grad=False),
+        "bitwidth": torch.autograd.Variable(torch.IntTensor(np.array([bitwidth])), requires_grad=False)
+    } for n in names}

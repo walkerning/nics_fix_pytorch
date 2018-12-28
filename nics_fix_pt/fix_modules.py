@@ -16,7 +16,8 @@ def fix_forward(self, input, **kwargs):
     for n, param in six.iteritems(self._parameters):
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        object.__setattr__(self, n, quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n))
+        set_n, self.step = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
+        object.__setattr__(self, n, set_n)
     return super(self.__class__, self).forward(input["input"], **kwargs)
 
 class FixMeta(type):
@@ -36,7 +37,7 @@ def register_fix_module(cls):
             assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
-
+            self.step = 0
             cls.__init__(self, *args, **kwargs)
 
 class Activation_fix(Module):
@@ -46,6 +47,7 @@ class Activation_fix(Module):
             "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
         self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
+        self.step = 0
     
     def forward(self, input):
         if not isinstance(input, dict):
@@ -53,7 +55,7 @@ class Activation_fix(Module):
         name = "activation"
         fix_cfg = self.nf_fix_params.get(name, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(name, {})
-        self.activation = quantitize(input["input"], fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=name)
+        self.activation, self.step = quantitize(input["input"], fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=name)
         return self.activation
 
 class FixTopModule(Module):
