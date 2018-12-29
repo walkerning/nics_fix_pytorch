@@ -8,7 +8,7 @@
       in `nics_fix_pt.nn_fix.<original name>_fix` or `ActivationFix` module construction
 
 ### Utilities
-- FixTopModule: dump/load fix configuration to/from file; print fix configs
+- FixTopModule: dump/load fix configuration to/from file; print fix configs. FixTopModule is just a wrapper that gather config print/load/dump/setting utilities, these utilities will work with nested normal nn.Module as intermediate modules.
 
 > NOTE: parameters are saved as float, and in most use cases(e.g. fixed-point hardware simultation), you always need to dump and load the fixed configurations of the variables using `model.get_fix_configs` and `model.load_fix_configs`. Check `examples/mnist/train_mnist.py` for an example.
 

@@ -9,7 +9,9 @@ here = os.path.dirname(os.path.abspath((__file__)))
 # meta infos
 NAME = "nics_fix_pytorch"
 DESCRIPTION = "Fixed point trainig framework on PyTorch"
-VERSION = "0.1"
+with open(os.path.join(os.path.dirname(__file__), "nics_fix_pt/VERSION")) as f:
+    VERSION = f.read().strip()
+        
 
 AUTHOR = "foxfi"
 EMAIL = "foxdoraame@gmail.com"
