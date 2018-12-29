@@ -14,6 +14,8 @@ def fix_forward(self, input, **kwargs):
     if not isinstance(input, dict):
         input = {"input": input}
     for n, param in six.iteritems(self._parameters):
+        if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
+            continue
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
         set_n, self.step = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
