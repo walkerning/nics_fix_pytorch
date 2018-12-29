@@ -71,18 +71,21 @@ class Net(nnf.FixTopModule):
         super(Net, self).__init__()
         # initialize some fix configurations
         self.fc1_fix_params = _generate_default_fix_cfg(["weight", "bias"], method=1, bitwidth=BITWIDTH)
+        self.bn_fc1_params = _generate_default_fix_cfg(["weight", "bias", "running_mean", "running_var"], method=1, bitwidth=BITWIDTH)
         self.fc2_fix_params = _generate_default_fix_cfg(["weight", "bias"], method=1, bitwidth=BITWIDTH)
-        self.fix_params = [_generate_default_fix_cfg(["activation"], method=1, bitwidth=BITWIDTH) for _ in range(3)]
+        self.fix_params = [_generate_default_fix_cfg(["activation"], method=1, bitwidth=BITWIDTH) for _ in range(4)]
         # initialize modules
         self.fc1 = nnf.Linear_fix(784, 100, nf_fix_params=self.fc1_fix_params)
+        self.bn_fc1 = nnf.BatchNorm1d_fix(100, nf_fix_params=self.bn_fc1_params)
         self.fc2 = nnf.Linear_fix(100, 10, nf_fix_params=self.fc2_fix_params)
         self.fix0 = nnf.Activation_fix(nf_fix_params=self.fix_params[0])
-        self.fix1 = nnf.Activation_fix(nf_fix_params=self.fix_params[1])
-        self.fix2 = nnf.Activation_fix(nf_fix_params=self.fix_params[2])
+        self.fix0_bn = nnf.Activation_fix(nf_fix_params=self.fix_params[1])
+        self.fix1 = nnf.Activation_fix(nf_fix_params=self.fix_params[2])
+        self.fix2 = nnf.Activation_fix(nf_fix_params=self.fix_params[3])
 
     def forward(self, x):
         x = self.fix0(x.view(-1, 784))
-        x = F.relu(self.fix1(self.fc1(x)))
+        x = F.relu(self.fix0_bn(self.bn_fc1(self.fix1(self.fc1(x)))))
         x = self.fix2(self.fc2(x))
         return F.log_softmax(x, dim=-1)
 

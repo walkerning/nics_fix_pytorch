@@ -13,13 +13,13 @@ import nics_fix_pt as nfp
                              "data": [0.2513, -0.52, 0],
                              "out_scale": 0,
                              "result": 0,
-                             "output": ([0.5, -0.5, 0], 0.5) # quantitized parameters, step
+                             "output": [0.5, -0.5, 0] # quantitized parameters, step 0.5
                          }), ({"input_num": 3}, {
                              "inputs": [1,1,0],
                              "data": [0.2513, -0.5, 0],
                              "out_scale": -1,
                              "result": -0.25,
-                             "output": ([0.25, -0.5, 0], 0.25) # quantitized parameters, step
+                             "output": [0.25, -0.5, 0] # quantitized parameters, step 0.25
                          })],
                          indirect=["module_cfg"])
 def test_fix_forward_auto(module_cfg, case):
@@ -29,8 +29,7 @@ def test_fix_forward_auto(module_cfg, case):
     with torch.no_grad():
         res = module.forward(torch.tensor(case["inputs"]).float())
         assert np.isclose(res, case["result"]) # calc output
-        assert np.isclose(module.param, case["output"][0]).all() # quantitized parameter
-        assert bool(module.step == case["output"][1]) # step
+        assert np.isclose(module.param, case["output"]).all() # quantitized parameter
         assert cfg["param"]["scale"] == case["out_scale"] # scale
 
 @pytest.mark.parametrize("module_cfg, case",

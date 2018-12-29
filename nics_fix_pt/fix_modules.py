@@ -18,9 +18,20 @@ def fix_forward(self, input, **kwargs):
             continue
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        set_n, self.step = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
+        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
         object.__setattr__(self, n, set_n)
-    return super(self.__class__, self).forward(input["input"], **kwargs)
+    for n, param in six.iteritems(self._buffers):
+        if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
+            continue
+        fix_cfg = self.nf_fix_params.get(n, {})
+        fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
+        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
+        object.__setattr__(self, n, set_n)
+    res = super(self.__class__, self).forward(input["input"], **kwargs)
+    for n, param in six.iteritems(self._buffers): # set buffer back, as there will be no gradient, just in-place modification
+        # FIXME: for fixed-point batch norm, the running mean/var accumulattion is on quantitized mean/var, which means it might fail to update the running mean/var if the updating momentum is too small
+        self._buffers[n] = getattr(self, n)
+    return res
 
 class FixMeta(type):
     def __new__(mcls, name, bases, attrs):
@@ -39,7 +50,6 @@ def register_fix_module(cls):
             assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
-            self.step = 0
             cls.__init__(self, *args, **kwargs)
 
 class Activation_fix(Module):
@@ -49,7 +59,6 @@ class Activation_fix(Module):
             "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
         self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
-        self.step = 0
     
     def forward(self, input):
         if not isinstance(input, dict):
@@ -57,7 +66,7 @@ class Activation_fix(Module):
         name = "activation"
         fix_cfg = self.nf_fix_params.get(name, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(name, {})
-        self.activation, self.step = quantitize(input["input"], fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=name)
+        self.activation, _ = quantitize(input["input"], fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=name)
         return self.activation
 
 class FixTopModule(Module):
@@ -68,20 +77,24 @@ class FixTopModule(Module):
     def load_fix_configs(self, cfgs, grad=False):
         assert isinstance(cfgs, (OrderedDict, dict))
         for name, module in six.iteritems(self._modules):
-            if isinstance(module, FixTopModule):
-                module.load_fix_config(cfgs[name], grad=grad)
-            elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
+            if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
+            elif isinstance(module, FixTopModule):
+                module.load_fix_config(cfgs[name], grad=grad)
+            else:
+                FixTopModule.load_fix_config(module, cfgs[name], grad=grad)
 
     def get_fix_configs(self, grad=False, data_only=False):
         cfg_dct = OrderedDict()
         for name, module in six.iteritems(self._modules):
-            if isinstance(module, FixTopModule):
-                cfg_dct[name] = module.get_fix_configs(method, grad=grad)
-            elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
+            if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 cfg_dct[name] = getattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad")
                 if data_only:
                     cfg_dct[name] = utils.try_parse_int(cfg_dct[name])
+            elif isinstance(module, FixTopModule):
+                cfg_dct[name] = module.get_fix_configs(grad=grad, data_only=data_only)
+            else:
+                cfg_dct[name] = FixTopModule.get_fix_configs(module, grad=grad, data_only=data_only)
         return cfg_dct
         
     def print_fix_configs(self, data_fix_cfg=None, grad_fix_cfg=None, prefix_spaces=0):
@@ -115,9 +128,7 @@ class FixTopModule(Module):
 
     def set_fix_method(self, method, grad=False):
         for module in six.itervalues(self._modules):
-            if isinstance(module, FixTopModule):
-                module.set_fix_method(method, grad=grad)
-            elif isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
+            if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 fix_params = getattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad")
                 for n in fix_params:
                     if "method" in fix_params[n]:
@@ -128,6 +139,10 @@ class FixTopModule(Module):
                             ori_method.numpy()[0] = method
                         else:
                             fix_params[n]["method"] = method
-                
+            elif isinstance(module, FixTopModule):
+                module.set_fix_method(method, grad=grad)
+            else:
+                FixTopModule.set_fix_method(module, method, grad=grad)
+
 nn_fix.Activation_fix = Activation_fix
 nn_fix.FixTopModule = FixTopModule
