@@ -4,6 +4,7 @@ from six import iteritems
 from collections import OrderedDict
 import copy
 import inspect
+from contextlib import contextmanager
 from functools import wraps
 
 import numpy as np
@@ -48,3 +49,21 @@ def _generate_default_fix_cfg(names, scale=0, bitwidth=8, method=0):
         "scale": torch.autograd.Variable(torch.IntTensor(np.array([scale])), requires_grad=False),
         "bitwidth": torch.autograd.Variable(torch.IntTensor(np.array([bitwidth])), requires_grad=False)
     } for n in names}
+
+_context = {}
+DEFAULT_KWARGS_KEY = "__fix_module_default_kwargs__"
+def get_kwargs(cls):
+    return _context.get(DEFAULT_KWARGS_KEY, {}).get(cls.__name__, {})
+
+@contextmanager
+def fix_kwargs_scope(_override=False, **kwargs):
+    old_kwargs = copy.copy(_context.get(DEFAULT_KWARGS_KEY, None))
+    if _override or DEFAULT_KWARGS_KEY not in _context:
+        _context[DEFAULT_KWARGS_KEY] = kwargs
+    else:
+        _context[DEFAULT_KWARGS_KEY].update(kwargs)
+    yield
+    if old_kwargs is None:
+        _context.pop(DEFAULT_KWARGS_KEY, None)
+    else:
+        _context[DEFAULT_KWARGS_KEY] = old_kwargs

@@ -34,7 +34,7 @@ FIX_FIXED = 2
 
 def quantitize_cfg(data, scale, bitwidth, method):
     if not isinstance(method, torch.autograd.Variable) and not torch.is_tensor(method) and method == FIX_NONE:
-        return data
+        return data, None
 
     if torch.is_tensor(method):
         method_v = int(method.numpy()[0])

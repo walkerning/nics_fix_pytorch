@@ -34,6 +34,8 @@ parser.add_argument('--seed', type=int, default=1, metavar='S',
                     help='random seed (default: 1)')
 parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
+parser.add_argument('--float', action="store_true", default=False,
+                    help='use float point training/testing')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -76,17 +78,18 @@ class Net(nnf.FixTopModule):
         self.fix_params = [_generate_default_fix_cfg(["activation"], method=1, bitwidth=BITWIDTH) for _ in range(4)]
         # initialize modules
         self.fc1 = nnf.Linear_fix(784, 100, nf_fix_params=self.fc1_fix_params)
-        self.bn_fc1 = nnf.BatchNorm1d_fix(100, nf_fix_params=self.bn_fc1_params)
+        # self.bn_fc1 = nnf.BatchNorm1d_fix(100, nf_fix_params=self.bn_fc1_params)
         self.fc2 = nnf.Linear_fix(100, 10, nf_fix_params=self.fc2_fix_params)
         self.fix0 = nnf.Activation_fix(nf_fix_params=self.fix_params[0])
-        self.fix0_bn = nnf.Activation_fix(nf_fix_params=self.fix_params[1])
+        # self.fix0_bn = nnf.Activation_fix(nf_fix_params=self.fix_params[1])
         self.fix1 = nnf.Activation_fix(nf_fix_params=self.fix_params[2])
         self.fix2 = nnf.Activation_fix(nf_fix_params=self.fix_params[3])
 
     def forward(self, x):
         x = self.fix0(x.view(-1, 784))
-        x = F.relu(self.fix0_bn(self.bn_fc1(self.fix1(self.fc1(x)))))
-        x = self.fix2(self.fc2(x))
+        x = F.relu(self.fix1(self.fc1(x)))
+        # x = F.relu(self.fix0_bn(self.bn_fc1(self.fix1(self.fc1(x)))))
+        self.logits = x = self.fix2(self.fc2(x))
         return F.log_softmax(x, dim=-1)
 
 model = Net()
@@ -134,8 +137,8 @@ def test(fix_method=nfp.FIX_FIXED):
         100. * correct / len(test_loader.dataset)))
 
 for epoch in range(1, args.epochs + 1):
-    train(epoch)
-    test()
+    train(epoch, nfp.FIX_NONE if args.float else nfp.FIX_AUTO)
+    test(nfp.FIX_NONE if args.float else nfp.FIX_FIXED)
 
 model.print_fix_configs()
 fix_cfg = {
@@ -147,12 +150,13 @@ with open("mnist_fix_config.yaml", "w") as wf:
 
 # Let's try float test
 print("test float: ", end="")
-test(nfp.FIX_NONE) # after 1 epoch: 9174/10000 92%
+test(nfp.FIX_NONE) # after 1 epoch: ~ 92%
 
-# Let's load the fix config again, and test it using FIX_FIXED
-print("load from the yaml config and test fixed again: ", end="")
-with open("mnist_fix_config.yaml", "r") as rf:
-    fix_cfg = yaml.load(rf)
-    model.load_fix_configs(fix_cfg["data"])
-    model.load_fix_configs(fix_cfg["grad"], grad=True)
-    test(nfp.FIX_FIXED) # after 1 epoch: 8852/10000 89%
+if not args.float:
+    # Let's load the fix config again, and test it using FIX_FIXED
+    print("load from the yaml config and test fixed again: ", end="")
+    with open("mnist_fix_config.yaml", "r") as rf:
+        fix_cfg = yaml.load(rf)
+        model.load_fix_configs(fix_cfg["data"])
+        model.load_fix_configs(fix_cfg["grad"], grad=True)
+        test(nfp.FIX_FIXED) # after 1 epoch: ~ 89%

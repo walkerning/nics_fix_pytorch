@@ -10,6 +10,15 @@ from torch.nn import Module
 from .quant import quantitize
 from . import nn_fix, utils
 
+def _get_kwargs(self, true_kwargs):
+    default_kwargs = utils.get_kwargs(self.__class__)
+    if not default_kwargs:
+        return true_kwargs
+    # NOTE: here we do not deep copy the default values, so non-atom type default value such as dict/list/tensor will be shared
+    kwargs = {k: v for k, v in six.iteritems(default_kwargs)}
+    kwargs.update(true_kwargs)
+    return kwargs
+
 def fix_forward(self, input, **kwargs):
     if not isinstance(input, dict):
         input = {"input": input}
@@ -36,25 +45,33 @@ def fix_forward(self, input, **kwargs):
 class FixMeta(type):
     def __new__(mcls, name, bases, attrs):
         # Construct class name
-        name = bases[0].__name__ + "_fix"
+        if not attrs["__register_name__"]:
+            attrs["__register_name__"] = bases[0].__name__ + "_fix"
+        name = attrs["__register_name__"]
         attrs["forward"] = fix_forward
         cls = super(FixMeta, mcls).__new__(mcls, name, bases, attrs)
         setattr(nn_fix, name, cls)
         return cls
 
-def register_fix_module(cls):
+def register_fix_module(cls, register_name=None):
     @six.add_metaclass(FixMeta)
     class __a_not_use_name(cls):
+        __register_name__ = register_name
         def __init__(self, *args, **kwargs):
+            kwargs = _get_kwargs(self, kwargs)
             # Pop and parse fix configuration from kwargs
             assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
             cls.__init__(self, *args, **kwargs)
+            # avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
+            # self.nf_fix_params = {k: self.nf_fix_params[k] for k in avail_keys if k in self.nf_fix_params}
+            # self.nf_fix_params_grad = {k: self.nf_fix_params_grad[k] for k in avail_keys if k in self.nf_fix_params_grad}
 
 class Activation_fix(Module):
     def __init__(self, **kwargs):
         super(Activation_fix, self).__init__()
+        kwargs = _get_kwargs(self, kwargs)
         assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict),\
             "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
