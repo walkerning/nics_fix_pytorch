@@ -4,7 +4,8 @@ with open(os.path.join(os.path.dirname(__file__), "VERSION")) as f:
 
 from nics_fix_pt.quant import *
 import nics_fix_pt.nn_fix_inner
-from nics_fix_pt import nn_fix, fix_modules
+from nics_fix_pt import nn_fix
+from nics_fix_pt.fix_modules import register_fix_module
 
 class nn_auto_register(object):
     """
@@ -25,7 +26,7 @@ class nn_auto_register(object):
             else:
                 ori_name = name
             ori_cls = getattr(torch.nn, ori_name)
-            fix_modules.register_fix_module(ori_cls, register_name=ori_name + "_fix")
+            register_fix_module(ori_cls, register_name=ori_name + "_fix")
             return getattr(nn_fix, ori_name + "_fix", None)
         return attr
 

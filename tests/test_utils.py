@@ -15,3 +15,21 @@ def test_auto_register():
     fix_module = nnf.Linear_another_fix(3, 1, nf_fix_params={})
     fix_module = nnf.Linear_another2_fix(3, 1, nf_fix_params={})
 
+def test_fix_state_dict(module_cfg):
+    import torch
+    from nics_fix_pt.nn_fix import FixTopModule
+    import nics_fix_pt.quant as nfpq
+
+    module, cfg, _ = module_cfg
+    dct = FixTopModule.fix_state_dict(module)
+    assert (dct["param"] == module._parameters["param"]).all() # not already fixed
+
+    # forward the module once
+    res = module.forward(torch.tensor([0,0,0]).float())
+    dct = FixTopModule.fix_state_dict(module)
+    dct_vars = FixTopModule.fix_state_dict(module, keep_vars=True)
+    quantized, _ = nfpq.quantitize_cfg(module._parameters["param"], **cfg["param"])
+    dct_vars = FixTopModule.fix_state_dict(module, keep_vars=True)
+    assert (dct["param"] == quantized).all() # already fixed
+    assert (dct_vars["param"] == quantized).all() # already fixed
+    assert (dct_vars["param"].nfp_actual_data == module._parameters["param"]).all() # underhood float-point data

@@ -87,16 +87,18 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
 
     step = 0
     # quantitize data
+    out_param = param
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
-        param, step = quantitize_cfg(param, data_cfg["scale"],
+        out_param, step = quantitize_cfg(out_param, data_cfg["scale"],
                                      data_cfg["bitwidth"], data_cfg["method"])
 
     # quantitize gradient
     method = grad_cfg.get("method", FIX_NONE) 
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
-        param = QuantitizeGradient().apply(param, grad_cfg["scale"],
-                                                   grad_cfg["bitwidth"], grad_cfg["method"])
-    param.data_cfg = data_cfg
-    param.grad_cfg = grad_cfg
+        out_param = QuantitizeGradient().apply(out_param, grad_cfg["scale"],
+                                               grad_cfg["bitwidth"], grad_cfg["method"])
+    out_param.data_cfg = data_cfg
+    out_param.grad_cfg = grad_cfg
+    out_param.nfp_actual_data = param
     # NOTE: the returned step is data fix stepsize, not gradient fix step size;
-    return param, step
+    return out_param, step

@@ -91,6 +91,54 @@ class FixTopModule(Module):
     A module with some simple fix configuration manage utilities.
     """
 
+    def fix_state_dict(self, destination=None, prefix='', keep_vars=False):
+        r"""FIXME: maybe do another quantization to make sure all vars are quantized?
+
+        Returns a dictionary containing a whole fixed-point state of the module.
+
+        Both parameters and persistent buffers (e.g. running averages) are
+        included. Keys are corresponding parameter and buffer names.
+
+        Returns:
+            dict:
+                a dictionary containing a whole state of the module
+
+        Example::
+
+            >>> module.state_dict().keys()
+            ['bias', 'weight']
+
+        """
+        if destination is None:
+            destination = OrderedDict()
+            destination._metadata = OrderedDict()
+        destination._metadata[prefix[:-1]] = local_metadata = dict(version=self._version)
+        for name, param in self._parameters.items():
+            if param is not None:
+                if isinstance(self.__class__, FixMeta): # A fixed-point module
+                    # Get the last used version of the parameters
+                    thevar = getattr(self, name)
+                else:
+                    thevar = param
+                destination[prefix + name] = thevar if keep_vars else thevar.data
+        for name, buf in self._buffers.items():
+            if buf is not None:
+                if isinstance(self.__class__, FixMeta): # A fixed-point module
+                    # Get the last saved version of the buffers,
+                    # which can be of float precision (as buffers will be turned into fixed-point precision on the next forward)
+                    thevar = getattr(self, name)
+                else:
+                    thevar = buf
+                destination[prefix + name] = thevar if keep_vars else thevar.data
+        for name, module in self._modules.items():
+            if module is not None:
+                FixTopModule.fix_state_dict(module, destination, prefix + name + '.', keep_vars=keep_vars)
+        for hook in self._state_dict_hooks.values():
+            hook_result = hook(self, destination, prefix, local_metadata)
+            if hook_result is not None:
+                destination = hook_result
+        return destination
+
     def load_fix_configs(self, cfgs, grad=False):
         assert isinstance(cfgs, (OrderedDict, dict))
         for name, module in six.iteritems(self._modules):
@@ -102,6 +150,13 @@ class FixTopModule(Module):
                 FixTopModule.load_fix_config(module, cfgs[name], grad=grad)
 
     def get_fix_configs(self, grad=False, data_only=False):
+        """
+        get_fix_configs:
+
+        Parameters:
+            grad: BOOLEAN(default False), whether or not to get the gradient configs instead of data configs
+            data_only: BOOLEAN(default False), whether or not to get the numbers instead of `torch.Tensor`(which can be modified in place)
+        """
         cfg_dct = OrderedDict()
         for name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):

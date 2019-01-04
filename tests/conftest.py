@@ -30,7 +30,7 @@ def module_cfg(request):
     grad_cfg = nfp.utils._generate_default_fix_cfg(["param"], scale=-1, bitwidth=2, method=nfp.FIX_NONE)
     # the specified overriding cfgs: input_num, data fix cfg, grad fix cfg
     update_cfg = getattr(request, "param", {})
-    input_num = update_cfg.pop("input_num")
+    input_num = update_cfg.pop("input_num", 3)
     data_update_cfg = update_cfg.get("data_cfg", {})
     grad_update_cfg = update_cfg.get("grad_cfg", {})
     data_cfg["param"].update(data_update_cfg)

@@ -36,6 +36,8 @@ parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--float', action="store_true", default=False,
                     help='use float point training/testing')
+parser.add_argument('--save', default=None,
+                    help='save fixed-point paramters to file')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -147,6 +149,14 @@ fix_cfg = {
 }
 with open("mnist_fix_config.yaml", "w") as wf:
     yaml.dump(fix_cfg, wf, default_flow_style=False)
+
+if args.save:
+    state = {
+        "model": model.fix_state_dict(),
+        "epoch": args.epochs
+    }
+    torch.save(state, args.save)
+    print("Saving fixed state dict to", args.save)
 
 # Let's try float test
 print("test float: ", end="")
