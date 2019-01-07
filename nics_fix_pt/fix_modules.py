@@ -145,9 +145,9 @@ class FixTopModule(Module):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
             elif isinstance(module, FixTopModule):
-                module.load_fix_config(cfgs[name], grad=grad)
+                module.load_fix_configs(cfgs[name], grad=grad)
             else:
-                FixTopModule.load_fix_config(module, cfgs[name], grad=grad)
+                FixTopModule.load_fix_configs(module, cfgs[name], grad=grad)
 
     def get_fix_configs(self, grad=False, data_only=False):
         """
