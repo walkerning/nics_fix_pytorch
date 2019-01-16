@@ -143,7 +143,10 @@ class FixTopModule(Module):
         assert isinstance(cfgs, (OrderedDict, dict))
         for name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
-                setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
+                if name not in cfgs:
+                    print("WARNING: Fix configuration for {} not found in the configuration! Make sure you know why this happened or there might be some subtle error!".format(name))
+                else:
+                    setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
             elif isinstance(module, FixTopModule):
                 module.load_fix_configs(cfgs[name], grad=grad)
             else:

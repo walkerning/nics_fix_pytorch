@@ -7,6 +7,8 @@
 - Data fix VS. Gradient fix: by supply `nf_fix_params`/`nf_fix_params_grad` kwargs args
       in `nics_fix_pt.nn_fix.<original name>_fix` or `ActivationFix` module construction
 
+> NOTE: When constructing a fixed-point module, the dictionary you passed in as `nf_fix_params` argument will be used directly, so if you pass the same configuration dict to two modules. These two module will share the same configurations... If you want each module to be quantized independently, you should construct different configuration dict for each module.
+
 The underhood quantization of each datum is implemented in `nics_fix.quant._do_quantitize`, the code is easy to understand, if you need different plug-in quantize method other than this default one, or maybe need a configurable behavior of `_do_quantitize`(maybe in simulation for simultaneous computation on different types of device), please contribute for a pluggable and configurable `_do_quantitize` (I believe this will be a simple change), or you can contact me.
 
 ### Examples
