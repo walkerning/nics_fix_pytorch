@@ -90,7 +90,18 @@ class FixTopModule(Module):
     """
     A module with some simple fix configuration manage utilities.
     """
+    def __init__(self, *args, **kwargs):
+        super(FixTopModule, self).__init__(*args, **kwargs)
 
+        # To be portable between python2/3, use staticmethod for these utility methods, and patch instance method here.
+        # As Python2 do not support binding instance method to a class that is not a FixTopModule
+        self.fix_state_dict = FixTopModule.fix_state_dict.__get__(self)
+        self.load_fix_configs = FixTopModule.load_fix_configs.__get__(self)
+        self.get_fix_configs = FixTopModule.get_fix_configs.__get__(self)
+        self.print_fix_configs = FixTopModule.print_fix_configs.__get__(self)
+        self.set_fix_method = FixTopModule.set_fix_method.__get__(self)
+
+    @staticmethod
     def fix_state_dict(self, destination=None, prefix='', keep_vars=False):
         r"""FIXME: maybe do another quantization to make sure all vars are quantized?
 
@@ -139,6 +150,7 @@ class FixTopModule(Module):
                 destination = hook_result
         return destination
 
+    @staticmethod
     def load_fix_configs(self, cfgs, grad=False):
         assert isinstance(cfgs, (OrderedDict, dict))
         for name, module in six.iteritems(self._modules):
@@ -152,6 +164,7 @@ class FixTopModule(Module):
             else:
                 FixTopModule.load_fix_configs(module, cfgs[name], grad=grad)
 
+    @staticmethod
     def get_fix_configs(self, grad=False, data_only=False):
         """
         get_fix_configs:
@@ -171,7 +184,8 @@ class FixTopModule(Module):
             else:
                 cfg_dct[name] = FixTopModule.get_fix_configs(module, grad=grad, data_only=data_only)
         return cfg_dct
-        
+
+    @staticmethod
     def print_fix_configs(self, data_fix_cfg=None, grad_fix_cfg=None, prefix_spaces=0):
         if data_fix_cfg is None:
             data_fix_cfg = self.get_fix_configs(grad=False)
@@ -201,6 +215,7 @@ class FixTopModule(Module):
                                                                                                         d_sc=d_sc, g_sc=g_sc,
                                                                                                         d_mt=d_mt, g_mt=g_mt))
 
+    @staticmethod
     def set_fix_method(self, method, grad=False):
         for module in six.itervalues(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):

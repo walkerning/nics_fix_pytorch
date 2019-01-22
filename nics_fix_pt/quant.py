@@ -97,8 +97,14 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
         out_param = QuantitizeGradient().apply(out_param, grad_cfg["scale"],
                                                grad_cfg["bitwidth"], grad_cfg["method"])
+
     out_param.data_cfg = data_cfg
     out_param.grad_cfg = grad_cfg
-    out_param.nfp_actual_data = param
+    if param is not out_param:
+        if hasattr(param, "nfp_actual_data"): # avoid memory leaking: old `buffer` tensors could remain referenced unexpectedly
+            del(param.nfp_actual_data)
+            del(param.data_cfg)
+            del(param.grad_cfg)
+        out_param.nfp_actual_data = param # avoid loop ref
     # NOTE: the returned step is data fix stepsize, not gradient fix step size;
     return out_param, step
