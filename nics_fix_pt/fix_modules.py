@@ -2,8 +2,9 @@
 
 from __future__ import print_function
 
-import six
 from collections import OrderedDict
+
+import six
 
 import torch
 from torch.nn import Module
@@ -14,42 +15,47 @@ def _get_kwargs(self, true_kwargs):
     default_kwargs = utils.get_kwargs(self.__class__)
     if not default_kwargs:
         return true_kwargs
-    # NOTE: here we do not deep copy the default values, so non-atom type default value such as dict/list/tensor will be shared
+    # NOTE: here we do not deep copy the default values,
+    # so non-atom type default value such as dict/list/tensor will be shared
     kwargs = {k: v for k, v in six.iteritems(default_kwargs)}
     kwargs.update(true_kwargs)
     return kwargs
 
-def fix_forward(self, input, **kwargs):
-    if not isinstance(input, dict):
-        input = {"input": input}
+def fix_forward(self, inputs, **kwargs):
+    if not isinstance(inputs, dict):
+        inputs = {"inputs": inputs}
     for n, param in six.iteritems(self._parameters):
         if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
             continue
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
+        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
         object.__setattr__(self, n, set_n)
     for n, param in six.iteritems(self._buffers):
         if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
             continue
         fix_cfg = self.nf_fix_params.get(n, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=n)
+        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
         object.__setattr__(self, n, set_n)
-    res = super(self.__class__, self).forward(input["input"], **kwargs)
-    for n, param in six.iteritems(self._buffers): # set buffer back, as there will be no gradient, just in-place modification
-        # FIXME: for fixed-point batch norm, the running mean/var accumulattion is on quantitized mean/var, which means it might fail to update the running mean/var if the updating momentum is too small
+    res = super(self.__class__, self).forward(inputs["inputs"], **kwargs)
+    for n, param in six.iteritems(self._buffers):
+        # set buffer back, as there will be no gradient, just in-place modification
+        # FIXME: For fixed-point batch norm,
+        # the running mean/var accumulattion is on quantitized mean/var,
+        # which means it might fail to update the running mean/var
+        # if the updating momentum is too small
         self._buffers[n] = getattr(self, n)
     return res
 
 class FixMeta(type):
-    def __new__(mcls, name, bases, attrs):
+    def __new__(mcs, name, bases, attrs):
         # Construct class name
         if not attrs["__register_name__"]:
             attrs["__register_name__"] = bases[0].__name__ + "_fix"
         name = attrs["__register_name__"]
         attrs["forward"] = fix_forward
-        cls = super(FixMeta, mcls).__new__(mcls, name, bases, attrs)
+        cls = super(FixMeta, mcs).__new__(mcs, name, bases, attrs)
         setattr(nn_fix, name, cls)
         return cls
 
@@ -60,13 +66,17 @@ def register_fix_module(cls, register_name=None):
         def __init__(self, *args, **kwargs):
             kwargs = _get_kwargs(self, kwargs)
             # Pop and parse fix configuration from kwargs
-            assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
+            assert "nf_fix_params" in kwargs and isinstance(kwargs["nf_fix_params"], dict), \
+                "Must specifiy `nf_fix_params` keyword arguments, "\
+                "and `nf_fix_params_grad` is optional."
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
             cls.__init__(self, *args, **kwargs)
             # avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
-            # self.nf_fix_params = {k: self.nf_fix_params[k] for k in avail_keys if k in self.nf_fix_params}
-            # self.nf_fix_params_grad = {k: self.nf_fix_params_grad[k] for k in avail_keys if k in self.nf_fix_params_grad}
+            # self.nf_fix_params = {k: self.nf_fix_params[k]
+            #                       for k in avail_keys if k in self.nf_fix_params}
+            # self.nf_fix_params_grad = {k: self.nf_fix_params_grad[k]
+            #                            for k in avail_keys if k in self.nf_fix_params_grad}
 
 class Activation_fix(Module):
     def __init__(self, **kwargs):
@@ -76,14 +86,16 @@ class Activation_fix(Module):
             "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
         self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
-    
-    def forward(self, input):
-        if not isinstance(input, dict):
-            input = {"input": input}
+        self.activation = None
+
+    def forward(self, inputs):
+        if not isinstance(inputs, dict):
+            inputs = {"inputs": inputs}
         name = "activation"
         fix_cfg = self.nf_fix_params.get(name, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(name, {})
-        self.activation, _ = quantitize(input["input"], fix_cfg, fix_grad_cfg, kwarg_cfg=input, name=name)
+        self.activation, _ = quantitize(inputs["inputs"], fix_cfg, fix_grad_cfg,
+                                        kwarg_cfg=inputs, name=name)
         return self.activation
 
 class FixTopModule(Module):
@@ -93,7 +105,8 @@ class FixTopModule(Module):
     def __init__(self, *args, **kwargs):
         super(FixTopModule, self).__init__(*args, **kwargs)
 
-        # To be portable between python2/3, use staticmethod for these utility methods, and patch instance method here.
+        # To be portable between python2/3, use staticmethod for these utility methods,
+        # and patch instance method here.
         # As Python2 do not support binding instance method to a class that is not a FixTopModule
         self.fix_state_dict = FixTopModule.fix_state_dict.__get__(self)
         self.load_fix_configs = FixTopModule.load_fix_configs.__get__(self)
@@ -136,14 +149,16 @@ class FixTopModule(Module):
             if buf is not None:
                 if isinstance(self.__class__, FixMeta): # A fixed-point module
                     # Get the last saved version of the buffers,
-                    # which can be of float precision (as buffers will be turned into fixed-point precision on the next forward)
+                    # which can be of float precision
+                    # (as buffers will be turned into fixed-point precision on the next forward)
                     thevar = getattr(self, name)
                 else:
                     thevar = buf
                 destination[prefix + name] = thevar if keep_vars else thevar.data
         for name, module in self._modules.items():
             if module is not None:
-                FixTopModule.fix_state_dict(module, destination, prefix + name + '.', keep_vars=keep_vars)
+                FixTopModule.fix_state_dict(module, destination, prefix + name + '.',
+                                            keep_vars=keep_vars)
         for hook in self._state_dict_hooks.values():
             hook_result = hook(self, destination, prefix, local_metadata)
             if hook_result is not None:
@@ -156,9 +171,12 @@ class FixTopModule(Module):
         for name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
                 if name not in cfgs:
-                    print("WARNING: Fix configuration for {} not found in the configuration! Make sure you know why this happened or there might be some subtle error!".format(name))
+                    print(("WARNING: Fix configuration for {} not found in the configuration! "
+                           "Make sure you know why this happened or "
+                           "there might be some subtle error!").format(name))
                 else:
-                    setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad", utils.try_parse_variable(cfgs[name]))
+                    setattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad",
+                            utils.try_parse_variable(cfgs[name]))
             elif isinstance(module, FixTopModule):
                 module.load_fix_configs(cfgs[name], grad=grad)
             else:
@@ -170,13 +188,16 @@ class FixTopModule(Module):
         get_fix_configs:
 
         Parameters:
-            grad: BOOLEAN(default False), whether or not to get the gradient configs instead of data configs
-            data_only: BOOLEAN(default False), whether or not to get the numbers instead of `torch.Tensor`(which can be modified in place)
+            grad: BOOLEAN(default False), whether or not to get the gradient configs
+                instead of data configs.
+            data_only: BOOLEAN(default False), whether or not to get the numbers instead
+                of `torch.Tensor` (which can be modified in place).
         """
         cfg_dct = OrderedDict()
         for name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(module, Activation_fix):
-                cfg_dct[name] = getattr(module, "nf_fix_params" if not grad else "nf_fix_params_grad")
+                cfg_dct[name] = getattr(module,
+                                        "nf_fix_params" if not grad else "nf_fix_params_grad")
                 if data_only:
                     cfg_dct[name] = utils.try_parse_int(cfg_dct[name])
             elif isinstance(module, FixTopModule):
@@ -192,7 +213,7 @@ class FixTopModule(Module):
         if grad_fix_cfg is None:
             grad_fix_cfg = self.get_fix_configs(grad=True)
         def _print(string, **kwargs):
-            print("\n".join([" " * prefix_spaces + line for line in string.split("\n")]), **kwargs)
+            print("\n".join([" " * prefix_spaces + line for line in string.split("\n")]) + "\n", **kwargs)
         for key in data_fix_cfg:
             _print(key)
             d_cfg = data_fix_cfg[key]
@@ -209,11 +230,14 @@ class FixTopModule(Module):
                     g_sc = utils.try_parse_int(g_cfg.get(param_name, {}).get("scale", "f"))
                     d_mt = utils.try_parse_int(d_cfg.get(param_name, {}).get("method", 0))
                     g_mt = utils.try_parse_int(g_cfg.get(param_name, {}).get("method", 0))
-                    _print(("  {param_name:10}: d: bitwidth: {d_bw:3}; scale: {d_sc:3}; method: {d_mt:3}\n" + 
-                            " " * 14+"g: bitwidth: {g_bw:3}; scale: {g_sc:3}; method: {g_mt:3}").format(param_name=param_name,
-                                                                                                        d_bw=d_bw, g_bw=g_bw,
-                                                                                                        d_sc=d_sc, g_sc=g_sc,
-                                                                                                        d_mt=d_mt, g_mt=g_mt))
+                    _print(("  {param_name:10}: d: bitwidth: {d_bw:3}; "
+                            "scale: {d_sc:3}; method: {d_mt:3}\n" +
+                            " " * 14 + "g: bitwidth: {g_bw:3}; scale: {g_sc:3}; method: {g_mt:3}")\
+                           .format(
+                               param_name=param_name,
+                               d_bw=d_bw, g_bw=g_bw,
+                               d_sc=d_sc, g_sc=g_sc,
+                               d_mt=d_mt, g_mt=g_mt))
 
     @staticmethod
     def set_fix_method(self, method, grad=False):

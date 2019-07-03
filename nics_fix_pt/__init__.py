@@ -9,10 +9,12 @@ from nics_fix_pt.fix_modules import register_fix_module
 
 class nn_auto_register(object):
     """
-    An auto register helper that automatically register all not-registered modules by proxing to modules in torch.nn.
+    An auto register helper that automatically register all not-registered modules
+    by proxing to modules in torch.nn.
 
-    NOTE: We do not guarantee all auto-registered fixed nn modules will well behave, as they are not tested. Although, I thought it will work in normal cases.
-    Use with care!!
+    NOTE: We do not guarantee all auto-registered fixed nn modules will well behave,
+    as they are not tested. Although, I thought it will work in normal cases.
+    Use with care!
 
     Usage: from nics_fix_pt import NAR as nnf
     then e.g. `nnf.Bilinear_fix` and `nnf.Bilinear` can all be used as a fixed-point module.

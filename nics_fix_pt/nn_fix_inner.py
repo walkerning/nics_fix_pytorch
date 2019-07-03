@@ -1,4 +1,4 @@
-import torch.nn as nn
+from torch import nn
 from .fix_modules import register_fix_module
 
 register_fix_module(nn.Conv2d)

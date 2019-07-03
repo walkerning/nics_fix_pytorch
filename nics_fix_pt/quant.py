@@ -12,20 +12,27 @@ __all__ = ["quantitize", "FIX_NONE", "FIX_AUTO", "FIX_FIXED"]
 def _do_quantitize(data, scale, bit_width):
     scale_f = scale.float()
     # print(scale_f)
-    step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False), (scale_f - (bit_width - 1).float()))
-    minimum = -torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False), scale_f)
+    step = torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]), requires_grad=False),
+                     (scale_f - (bit_width - 1).float()))
+    minimum = -torch.pow(torch.autograd.Variable(torch.FloatTensor([2.]),
+                                                 requires_grad=False),
+                         scale_f)
     step = step.to(data.device)
     minimum = minimum.to(data.device)
 
     # maximum = -minimum - step
     maximum = -minimum
-    # TODO: Even if the quantitize cfg is "auto", some overflow may occur, and maybe cause some problems.
-    #       such as maybe weights won't be able to be trained to change scale if the learning rate is not big enough.
+    # TODO: Even if the quantitize cfg is "auto", some overflow may occur,
+    #       and maybe cause some problems.
+    #       such as maybe weights won't be able to be trained to change scale
+    #       if the learning rate is not big enough.
     # Two possible solutions:
-    # * Do not minus step at maximum when training on software, 
-    #   this may cause some small discrepancy between software simulation and actual hardware deployment.
+    # * Do not minus step at maximum when training on software, this may cause some
+    #   small discrepancy between software simulation and actual hardware deployment.
     # * Modify the `new_scale` calculation.
-    return torch.min(torch.max(StraightThroughRound.apply(data / step) * step, minimum), maximum), step
+    return torch.min(torch.max(StraightThroughRound.apply(data / step) * step,
+                               minimum),
+                     maximum), step
 
 # quantitze methods
 FIX_NONE = 0
@@ -33,7 +40,8 @@ FIX_AUTO = 1
 FIX_FIXED = 2
 
 def quantitize_cfg(data, scale, bitwidth, method):
-    if not isinstance(method, torch.autograd.Variable) and not torch.is_tensor(method) and method == FIX_NONE:
+    if not isinstance(method, torch.autograd.Variable) \
+       and not torch.is_tensor(method) and method == FIX_NONE:
         return data, None
 
     if torch.is_tensor(method):
@@ -48,12 +56,14 @@ def quantitize_cfg(data, scale, bitwidth, method):
         return data, None
     elif method_v == FIX_AUTO:
         EPS = 1e-5
-        new_scale = torch.ceil(torch.log(torch.max(torch.max(torch.abs(data)), torch.tensor(EPS).float().to(data.device))) / np.log(2.))
+        new_scale = torch.ceil(torch.log(torch.max(
+            torch.max(torch.abs(data)),
+            torch.tensor(EPS).float().to(data.device))) / np.log(2.))
         scale.data.numpy()[0] = new_scale
         return _do_quantitize(data, scale, bitwidth)
     elif method_v == FIX_FIXED:
         return _do_quantitize(data, scale, bitwidth)
-    assert False, "Quantitize method not legal: {}".format(method_v)
+    raise Exception("Quantitize method not legal: {}".format(method_v))
 
 # https://discuss.pytorch.org/t/how-to-override-the-gradients-for-parameters/3417/6
 class StraightThroughRound(torch.autograd.Function):
@@ -67,7 +77,8 @@ class StraightThroughRound(torch.autograd.Function):
 class QuantitizeGradient(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, scale, bitwidth, method):
-        # FIXME: save the tensor/variables for backward, maybe should use `ctx.save_for_backward` for standard practice,
+        # FIXME: save the tensor/variables for backward,
+        #        maybe should use `ctx.save_for_backward` for standard practice
         # but `save_for_backward` requires scale/bitwidth/method all being of type `Variable`...
         ctx.saved = (scale, bitwidth, method)
         return x
@@ -90,10 +101,10 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     out_param = param
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
         out_param, step = quantitize_cfg(out_param, data_cfg["scale"],
-                                     data_cfg["bitwidth"], data_cfg["method"])
+                                         data_cfg["bitwidth"], data_cfg["method"])
 
     # quantitize gradient
-    method = grad_cfg.get("method", FIX_NONE) 
+    method = grad_cfg.get("method", FIX_NONE)
     if isinstance(method, torch.autograd.Variable) or torch.is_tensor(method) or method != FIX_NONE:
         out_param = QuantitizeGradient().apply(out_param, grad_cfg["scale"],
                                                grad_cfg["bitwidth"], grad_cfg["method"])
@@ -101,10 +112,11 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     out_param.data_cfg = data_cfg
     out_param.grad_cfg = grad_cfg
     if param is not out_param:
-        if hasattr(param, "nfp_actual_data"): # avoid memory leaking: old `buffer` tensors could remain referenced unexpectedly
-            del(param.nfp_actual_data)
-            del(param.data_cfg)
-            del(param.grad_cfg)
+        # avoid memory leaking: old `buffer` tensors could remain referenced unexpectedly
+        if hasattr(param, "nfp_actual_data"):
+            del param.nfp_actual_data
+            del param.data_cfg
+            del param.grad_cfg
         out_param.nfp_actual_data = param # avoid loop ref
     # NOTE: the returned step is data fix stepsize, not gradient fix step size;
     return out_param, step
