@@ -77,6 +77,8 @@ You can modify the config tensors in place to change the behavior.
 
 Tested with Python 2.7, 3.5, 3.6.1+.
 
+Pytorch 0.4.1, 1.0.0, 1.1.0.
+
 ![coverage percentage](./coverage.svg)
 
 Run `python setup.py test` to run the pytest test cases.

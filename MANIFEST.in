@@ -1,2 +1,2 @@
 include tests/*.py
-recursive-include examples *.py
+recursive-include examples *.py *.sh
