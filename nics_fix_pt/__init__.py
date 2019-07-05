@@ -1,4 +1,5 @@
 import os
+
 with open(os.path.join(os.path.dirname(__file__), "VERSION")) as f:
     __version__ = f.read().strip()
 
@@ -6,6 +7,7 @@ from nics_fix_pt.quant import *
 import nics_fix_pt.nn_fix_inner
 from nics_fix_pt import nn_fix
 from nics_fix_pt.fix_modules import register_fix_module
+
 
 class nn_auto_register(object):
     """
@@ -19,8 +21,10 @@ class nn_auto_register(object):
     Usage: from nics_fix_pt import NAR as nnf
     then e.g. `nnf.Bilinear_fix` and `nnf.Bilinear` can all be used as a fixed-point module.
     """
+
     def __getattr__(self, name):
         import torch
+
         attr = getattr(nn_fix, name, None)
         if attr is None:
             if name.endswith("_fix"):
@@ -31,5 +35,6 @@ class nn_auto_register(object):
             register_fix_module(ori_cls, register_name=ori_name + "_fix")
             return getattr(nn_fix, ori_name + "_fix", None)
         return attr
+
 
 NAR = nn_auto_register()
