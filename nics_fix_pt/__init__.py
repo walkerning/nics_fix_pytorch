@@ -3,10 +3,18 @@ import os
 with open(os.path.join(os.path.dirname(__file__), "VERSION")) as f:
     __version__ = f.read().strip()
 
+from nics_fix_pt.consts import QuantizeMethod, RangeMethod
 from nics_fix_pt.quant import *
 import nics_fix_pt.nn_fix_inner
 from nics_fix_pt import nn_fix
 from nics_fix_pt.fix_modules import register_fix_module
+
+FIX_NONE = QuantizeMethod.FIX_NONE
+FIX_AUTO = QuantizeMethod.FIX_AUTO
+FIX_FIXED = QuantizeMethod.FIX_FIXED
+
+RANGE_MAX = RangeMethod.RANGE_MAX
+RANGE_3SIGMA = RangeMethod.RANGE_3SIGMA
 
 
 class nn_auto_register(object):

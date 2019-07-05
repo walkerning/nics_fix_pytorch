@@ -22,6 +22,17 @@ def try_parse_variable(something):
         return something
 
 
+def get_int(something):
+    if torch.is_tensor(something):
+        v = int(something.numpy()[0])
+    elif isinstance(something, torch.autograd.Variable):
+        v = int(something.data.numpy()[0])
+    else:
+        assert isinstance(something, (int, np.int))
+        v = int(something)
+    return v
+
+
 def try_parse_int(something):
     if isinstance(something, (dict, OrderedDict)):  # recursive parse into dict values
         return {k: try_parse_int(v) for k, v in iteritems(something)}

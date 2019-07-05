@@ -7,7 +7,10 @@ import copy
 import numpy as np
 import torch
 
-__all__ = ["quantitize", "FIX_NONE", "FIX_AUTO", "FIX_FIXED"]
+from nics_fix_pt.utils import get_int
+from nics_fix_pt.consts import QuantizeMethod, RangeMethod
+
+__all__ = ["quantitize"]
 
 
 def _do_quantitize(data, scale, bit_width):
@@ -41,44 +44,37 @@ def _do_quantitize(data, scale, bit_width):
     )
 
 
-# quantitze methods
-FIX_NONE = 0
-FIX_AUTO = 1
-FIX_FIXED = 2
-
-
-def quantitize_cfg(data, scale, bitwidth, method):
+def quantitize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_MAX):
     if (
         not isinstance(method, torch.autograd.Variable)
         and not torch.is_tensor(method)
-        and method == FIX_NONE
+        and method == QuantizeMethod.FIX_NONE
     ):
         return data, None
 
-    if torch.is_tensor(method):
-        method_v = int(method.numpy()[0])
-    elif isinstance(method, torch.autograd.Variable):
-        method_v = int(method.data.numpy()[0])
-    else:
-        assert isinstance(method, (int, np.int))
-        method_v = int(method)
+    method_v = get_int(method)
 
-    if method_v == FIX_NONE:
+    if method_v == QuantizeMethod.FIX_NONE:
         return data, None
-    elif method_v == FIX_AUTO:
+    elif method_v == QuantizeMethod.FIX_AUTO:
         EPS = 1e-5
-        new_scale = torch.ceil(
-            torch.log(
-                torch.max(
-                    torch.max(torch.abs(data)),
-                    torch.tensor(EPS).float().to(data.device),
+        range_method_v = get_int(range_method)
+        if range_method_v == RangeMethod.RANGE_MAX:
+            new_scale = torch.ceil(
+                torch.log(
+                    torch.max(
+                        torch.max(torch.abs(data)),
+                        torch.tensor(EPS).float().to(data.device),
+                    )
                 )
+                / np.log(2.0)
             )
-            / np.log(2.0)
-        )
+        elif range_method_v == RangeMethod.RANGE_3SIGMA:
+            # TODO: Dr. Sun said he will implement this
+            raise NotImplementedError()
         scale.data.numpy()[0] = new_scale
         return _do_quantitize(data, scale, bitwidth)
-    elif method_v == FIX_FIXED:
+    elif method_v == QuantizeMethod.FIX_FIXED:
         return _do_quantitize(data, scale, bitwidth)
     raise Exception("Quantitize method not legal: {}".format(method_v))
 
@@ -96,16 +92,16 @@ class StraightThroughRound(torch.autograd.Function):
 
 class QuantitizeGradient(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, scale, bitwidth, method):
+    def forward(ctx, x, scale, bitwidth, method, range_method=RangeMethod.RANGE_MAX):
         # FIXME: save the tensor/variables for backward,
         #        maybe should use `ctx.save_for_backward` for standard practice
         # but `save_for_backward` requires scale/bitwidth/method all being of type `Variable`...
-        ctx.saved = (scale, bitwidth, method)
+        ctx.saved = (scale, bitwidth, method, range_method)
         return x
 
     @staticmethod
     def backward(ctx, g):
-        return quantitize_cfg(g, *ctx.saved)[0], None, None, None
+        return quantitize_cfg(g, *ctx.saved)[0], None, None, None, None
 
 
 def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
@@ -115,7 +111,7 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     data_cfg.update(kwarg_cfg.get(name + "_fix", {}))
     grad_cfg = copy.copy(fix_grad_cfg)
     grad_cfg.update(kwarg_cfg.get(name + "_grad_fix", {}))
-    method = data_cfg.get("method", FIX_NONE)
+    method = data_cfg.get("method", QuantizeMethod.FIX_NONE)
 
     step = 0
     # quantitize data
@@ -123,21 +119,29 @@ def quantitize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     if (
         isinstance(method, torch.autograd.Variable)
         or torch.is_tensor(method)
-        or method != FIX_NONE
+        or method != QuantizeMethod.FIX_NONE
     ):
         out_param, step = quantitize_cfg(
-            out_param, data_cfg["scale"], data_cfg["bitwidth"], data_cfg["method"]
+            out_param,
+            data_cfg["scale"],
+            data_cfg["bitwidth"],
+            data_cfg["method"],
+            data_cfg.get("range_method", RangeMethod.RANGE_MAX),
         )
 
     # quantitize gradient
-    method = grad_cfg.get("method", FIX_NONE)
+    method = grad_cfg.get("method", QuantizeMethod.FIX_NONE)
     if (
         isinstance(method, torch.autograd.Variable)
         or torch.is_tensor(method)
-        or method != FIX_NONE
+        or method != QuantizeMethod.FIX_NONE
     ):
         out_param = QuantitizeGradient().apply(
-            out_param, grad_cfg["scale"], grad_cfg["bitwidth"], grad_cfg["method"]
+            out_param,
+            grad_cfg["scale"],
+            grad_cfg["bitwidth"],
+            grad_cfg["method"],
+            grad_cfg.get("range_method", RangeMethod.RANGE_MAX),
         )
 
     out_param.data_cfg = data_cfg
