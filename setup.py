@@ -59,8 +59,11 @@ setup(
     py_modules=MODULES,
     packages=PACKAGES,
     entry_points=ENTRY_POINTS,
-    zip_safe=True,
+    zip_safe=False,
     install_requires=INSTALL_REQUIRES,
     tests_require=TESTS_REQUIRE,
     cmdclass={"test": PyTest},
+    package_data={
+        "nics_fix_pt": ["VERSION"]
+    }
 )
