@@ -23,42 +23,44 @@ def _get_kwargs(self, true_kwargs):
     return kwargs
 
 
-def fix_forward(self, inputs, **kwargs):
-    if not isinstance(inputs, dict):
-        inputs = {"inputs": inputs}
-    for n, param in six.iteritems(self._parameters):
-        if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
-            continue
-        fix_cfg = self.nf_fix_params.get(n, {})
-        fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
-        object.__setattr__(self, n, set_n)
-    for n, param in six.iteritems(self._buffers):
-        if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
-            continue
-        fix_cfg = self.nf_fix_params.get(n, {})
-        fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-        set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
-        object.__setattr__(self, n, set_n)
-    res = super(self.__class__, self).forward(inputs["inputs"], **kwargs)
-    for n, param in six.iteritems(self._buffers):
-        # set buffer back, as there will be no gradient, just in-place modification
-        # FIXME: For fixed-point batch norm,
-        # the running mean/var accumulattion is on quantitized mean/var,
-        # which means it might fail to update the running mean/var
-        # if the updating momentum is too small
-        self._buffers[n] = getattr(self, n)
-    return res
+def get_fix_forward(cur_cls):
+    def fix_forward(self, inputs, **kwargs):
+        if not isinstance(inputs, dict):
+            inputs = {"inputs": inputs}
+        for n, param in six.iteritems(self._parameters):
+            if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
+                continue
+            fix_cfg = self.nf_fix_params.get(n, {})
+            fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
+            set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            object.__setattr__(self, n, set_n)
+        for n, param in six.iteritems(self._buffers):
+            if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
+                continue
+            fix_cfg = self.nf_fix_params.get(n, {})
+            fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
+            set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            object.__setattr__(self, n, set_n)
+        res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
+        for n, param in six.iteritems(self._buffers):
+            # set buffer back, as there will be no gradient, just in-place modification
+            # FIXME: For fixed-point batch norm,
+            # the running mean/var accumulattion is on quantitized mean/var,
+            # which means it might fail to update the running mean/var
+            # if the updating momentum is too small
+            self._buffers[n] = getattr(self, n)
+        return res
+    return fix_forward
 
 
 class FixMeta(type):
     def __new__(mcs, name, bases, attrs):
         # Construct class name
-        if not attrs["__register_name__"]:
+        if not attrs.get("__register_name__", None):
             attrs["__register_name__"] = bases[0].__name__ + "_fix"
         name = attrs["__register_name__"]
-        attrs["forward"] = fix_forward
         cls = super(FixMeta, mcs).__new__(mcs, name, bases, attrs)
+        cls.forward = get_fix_forward(cur_cls=cls)
         setattr(nn_fix, name, cls)
         return cls
 

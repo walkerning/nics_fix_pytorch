@@ -21,7 +21,7 @@ MODULES = []
 PACKAGES = find_packages(exclude=["tests.*", "tests"])
 
 # dependencies
-INSTALL_REQUIRES = ["six==1.11.0", "numpy"]
+INSTALL_REQUIRES = ["six", "numpy"]
 TESTS_REQUIRE = ["pytest", "pytest-cov", "PyYAML"]  # for mnist example
 
 # entry points
