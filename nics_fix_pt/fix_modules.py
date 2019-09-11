@@ -8,8 +8,7 @@ import six
 
 import torch
 from torch.nn import Module
-from .quant import quantitize
-from . import nn_fix, utils
+from . import nn_fix, utils, quant
 
 
 def _get_kwargs(self, true_kwargs):
@@ -32,14 +31,14 @@ def get_fix_forward(cur_cls):
                 continue
             fix_cfg = self.nf_fix_params.get(n, {})
             fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-            set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         for n, param in six.iteritems(self._buffers):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
             fix_cfg = self.nf_fix_params.get(n, {})
             fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
-            set_n, _ = quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
         for n, param in six.iteritems(self._buffers):
@@ -60,7 +59,9 @@ class FixMeta(type):
             attrs["__register_name__"] = bases[0].__name__ + "_fix"
         name = attrs["__register_name__"]
         cls = super(FixMeta, mcs).__new__(mcs, name, bases, attrs)
-        cls.forward = get_fix_forward(cur_cls=cls)
+        # if already subclass
+        if not isinstance(bases[0], FixMeta):
+            cls.forward = get_fix_forward(cur_cls=cls)
         setattr(nn_fix, name, cls)
         return cls
 
@@ -106,7 +107,7 @@ class Activation_fix(Module):
         name = "activation"
         fix_cfg = self.nf_fix_params.get(name, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(name, {})
-        self.activation, _ = quantitize(
+        self.activation, _ = quant.quantitize(
             inputs["inputs"], fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=name
         )
         return self.activation
