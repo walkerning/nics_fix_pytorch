@@ -70,7 +70,10 @@ def quantitize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE
                 / np.log(2.0)
             )
         elif range_method_v == RangeMethod.RANGE_3SIGMA:
-            # TODO: Dr. Sun said he will implement this
+            # raise NotImplementedError()
+            new_boundary = torch.max(3*torch.std(data)+torch.abs(torch.mean(data)), torch.tensor(EPS).float().to(data.device),)
+            new_scale = torch.ceil(torch.log(new_boundary) / np.log(2.0))
+        else:
             raise NotImplementedError()
         scale.data.numpy()[0] = new_scale
         return _do_quantitize(data, scale, bitwidth)

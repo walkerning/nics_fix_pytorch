@@ -41,6 +41,14 @@ import nics_fix_pt.quant as nfpq
             "out_scale": 0,
             "output": ([0.5, -0.5, 0], 0.5),
         },
+        {
+            "data": [0.2513, -0.52, 0],
+            "scale": -1,
+            "bitwidth": 4,
+            "method": nfp.FIX_AUTO,
+            "range_method": nfp.RANGE_3SIGMA,
+            "output": ([0.25, -0.5, 0], 0.25)
+        },
     ],
 )
 def test_quantitize_cfg(case):
@@ -50,6 +58,7 @@ def test_quantitize_cfg(case):
         scale_tensor,
         torch.tensor(case["bitwidth"]),
         case["method"],
+        nfp.RANGE_MAX if "range_method" not in case.keys() else nfp.RANGE_3SIGMA,
     )
     assert np.isclose(out[0], case["output"][0]).all()
     assert np.isclose(out[1], case["output"][1])
