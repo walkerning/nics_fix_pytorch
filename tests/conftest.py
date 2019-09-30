@@ -19,6 +19,7 @@ class TestModule(Module):
             self.param[0, 1] = 0.5
 
     def forward(self, input):
+        # print("input: ", input, "param: ", self.param)
         return F.linear(input, self.param, None)
 
 

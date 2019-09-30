@@ -14,14 +14,16 @@ __all__ = ["quantitize"]
 
 
 def _do_quantitize(data, scale, bit_width):
-    scale_f = scale.float()
-    # print(scale_f)
+    scale_f = scale.to(data.device).float()
+    bit_width = bit_width.to(data.device)
+    tensor_2 = torch.autograd.Variable(torch.FloatTensor([2.0]),
+                                       requires_grad=False).to(data.device)
     step = torch.pow(
-        torch.autograd.Variable(torch.FloatTensor([2.0]), requires_grad=False),
-        (scale_f - (bit_width - 1).float()),
+        tensor_2, (scale_f - (bit_width - 1).float())
     )
+
     minimum = -torch.pow(
-        torch.autograd.Variable(torch.FloatTensor([2.0]), requires_grad=False), scale_f
+        tensor_2, scale_f
     )
     step = step.to(data.device)
     minimum = minimum.to(data.device)
@@ -75,7 +77,7 @@ def quantitize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE
             new_scale = torch.ceil(torch.log(new_boundary) / np.log(2.0))
         else:
             raise NotImplementedError()
-        scale.data.numpy()[0] = new_scale
+        scale.data[0] = new_scale
         return _do_quantitize(data, scale, bitwidth)
     elif method_v == QuantizeMethod.FIX_FIXED:
         return _do_quantitize(data, scale, bitwidth)

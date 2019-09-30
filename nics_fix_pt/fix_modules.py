@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 
+import warnings
 from collections import OrderedDict
 
 import six
@@ -23,21 +24,22 @@ def _get_kwargs(self, true_kwargs):
 
 
 def get_fix_forward(cur_cls):
+    #pylint: disable=protected-access
     def fix_forward(self, inputs, **kwargs):
         if not isinstance(inputs, dict):
             inputs = {"inputs": inputs}
         for n, param in six.iteritems(self._parameters):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
-            fix_cfg = self.nf_fix_params.get(n, {})
-            fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
+            fix_cfg = self._get_fix_cfg(n)
+            fix_grad_cfg = self._get_fix_cfg(n, grad=True)
             set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         for n, param in six.iteritems(self._buffers):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
-            fix_cfg = self.nf_fix_params.get(n, {})
-            fix_grad_cfg = self.nf_fix_params_grad.get(n, {})
+            fix_cfg = self._get_fix_cfg(n)
+            fix_grad_cfg = self._get_fix_cfg(n, grad=True)
             set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
@@ -83,12 +85,41 @@ def register_fix_module(cls, register_name=None):
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
             cls.__init__(self, *args, **kwargs)
+            self._register_fix_buffers()
             # avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
             # self.nf_fix_params = {k: self.nf_fix_params[k]
             #                       for k in avail_keys if k in self.nf_fix_params}
             # self.nf_fix_params_grad = {k: self.nf_fix_params_grad[k]
             #                            for k in avail_keys if k in self.nf_fix_params_grad}
 
+        def _get_fix_cfg(self, name, grad=False):
+            if not grad:
+                cfg = self.nf_fix_params.get(name, {})
+                if "scale" in cfg:
+                    cfg["scale"] = self._buffers["{}_fp_scale".format(name)]
+            else:
+                cfg = self.nf_fix_params_grad.get(name, {})
+                if "scale" in cfg:
+                    cfg["scale"] = self._buffers["{}_grad_fp_scale".format(name)]
+            return cfg
+
+        def _register_fix_buffers(self):
+            # register scale tensors as buffers, for correct use in multi-gpu data parallel model
+            avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
+            for name, cfg in six.iteritems(self.nf_fix_params):
+                if name not in avail_keys:
+                    warnings.warn(("{} not available in {}, this specific fixed config "
+                                   "will not have effects").format(name, self))
+                if "scale" in cfg:
+                    self.register_buffer("{}_fp_scale".format(name), cfg["scale"])
+
+            avail_keys = list(self._parameters.keys())
+            for name, cfg in six.iteritems(self.nf_fix_params_grad):
+                if name not in avail_keys:
+                    warnings.warn(("{} not available in {}, this specific grads fixed config "
+                                   "will not have effects").format(name, self))
+                if "scale" in cfg:
+                    self.register_buffer("{}_grad_fp_scale".format(name), cfg["scale"])
 
 class Activation_fix(Module):
     def __init__(self, **kwargs):
