@@ -33,10 +33,16 @@ model_names = sorted(
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
 parser.add_argument(
+    "--gpu",
+    metavar="GPUs",
+    default="0",
+    help="The gpu devices to use"
+)
+parser.add_argument(
     "--arch",
     "-a",
     metavar="ARCH",
-    default="vgg19",
+    default="vgg11_elegant",
     choices=model_names,
     help="model architecture: " + " | ".join(model_names) + " (default: vgg19)",
 )
@@ -140,11 +146,50 @@ parser.add_argument(
 best_prec1 = 90
 start = time.time()
 
+def _set_fix_method_train_ori(model):
+    model.set_fix_method(nfp.FIX_AUTO)
+
+def _set_fix_method_eval_ori(model):
+    model.set_fix_method(nfp.FIX_FIXED)
+
+## --------
+## When bitwidth is small, bn fix would prevent the model from learning.
+## Could use this following config:
+## Note that batchnorm2d_fix buffers (running_mean, running_var) are handled specially here.
+## The running_mean and running_var are not quantized during training forward process,
+## only quantized during test process. This could help avoid the buffer accumulation problem
+## when the bitwidth is too small.
+def _set_fix_method_train(model):
+    model.set_fix_method(
+        nfp.FIX_AUTO,
+        method_by_type={
+            "BatchNorm2d_fix": {
+                "weight": nfp.FIX_AUTO,
+                "bias": nfp.FIX_AUTO,
+                "running_mean": nfp.FIX_NONE,
+                "running_var": nfp.FIX_NONE}
+        })
+
+def _set_fix_method_eval(model):
+    model.set_fix_method(
+        nfp.FIX_FIXED,
+        method_by_type={
+            "BatchNorm2d_fix": {
+                "weight": nfp.FIX_FIXED,
+                "bias": nfp.FIX_FIXED,
+                "running_mean": nfp.FIX_AUTO,
+                "running_var": nfp.FIX_AUTO}
+        })
+## --------
+
 
 def main():
     global args, best_prec1
     args = parser.parse_args()
 
+    gpus = [int(d) for d in args.gpu.split(",")]
+    torch.cuda.set_device(gpus[0])
+        
     # Check the save_dir exists or not
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
@@ -154,8 +199,11 @@ def main():
         print(module)
     model.print_fix_configs()
 
-    # model.features = torch.nn.DataParallel(model.features)
     model.cuda()
+    if len(gpus) > 1:
+        parallel_model = torch.nn.DataParallel(model, gpus)
+    else:
+        parallel_model = model
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -247,17 +295,17 @@ def main():
     """
 
     if args.evaluate:
-        validate(val_loader, model, criterion)
+        validate(val_loader, model, parallel_model, criterion)
         return
 
     for epoch in range(args.start_epoch, args.epoches):
         adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
+        train(train_loader, model, parallel_model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        prec1 = validate(val_loader, model, parallel_model, criterion)
 
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
@@ -280,7 +328,7 @@ def main():
     print("Best acc: {}".format(best_prec1))
 
 
-def train(train_loader, model, criterion, optimizer, epoch):
+def train(train_loader, model, p_model, criterion, optimizer, epoch):
     """
         Run one train epoch
     """
@@ -288,12 +336,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
     top1 = AverageMeter()
 
     # switch to train mode
-    model.set_fix_method(nfp.FIX_AUTO)
-    # model.set_fix_method(nfp.FIX_NONE)
+    _set_fix_method_train_ori(model)
     model.train()
 
     for i, (input, target) in enumerate(train_loader):
-
         target = target.cuda(async=True)
         input_var = torch.autograd.Variable(input).cuda()
         target_var = torch.autograd.Variable(target)
@@ -301,7 +347,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
             input_var = input_var.half()
 
         # compute output
-        output = model(input_var)
+        output = p_model(input_var)
         loss = criterion(output, target_var)
 
         # compute gradient and do SGD step
@@ -333,7 +379,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
             )
 
 
-def validate(val_loader, model, criterion):
+def validate(val_loader, model, p_model, criterion):
     """
     Run evaluation
     """
@@ -341,8 +387,7 @@ def validate(val_loader, model, criterion):
     top1 = AverageMeter()
 
     # switch to evaluate mode
-    model.set_fix_method(nfp.FIX_FIXED)
-    # model.set_fix_method(nfp.FIX_NONE)
+    _set_fix_method_eval_ori(model)
     model.eval()
 
     for i, (input, target) in enumerate(val_loader):
@@ -354,7 +399,7 @@ def validate(val_loader, model, criterion):
             input_var = input_var.half()
 
         # compute output
-        output = model(input_var)
+        output = p_model(input_var)
         loss = criterion(output, target_var)
 
         output = output.float()

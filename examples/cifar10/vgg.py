@@ -264,7 +264,9 @@ def make_layers(cfg, batch_norm=False):
             )
 
             if batch_norm:
-                layers += [conv2d, activation, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+                layers += [conv2d, activation, nnf.BatchNorm2d_fix(v[1], nf_fix_params=_generate_default_fix_cfg(
+                    ["weight", "bias", "running_mean", "running_var"], method=1, bitwidth=8,
+                )), nn.ReLU(inplace=True)]
             else:
                 layers += [conv2d, activation, nn.ReLU(inplace=True)]
             in_channels = v[1]
@@ -297,6 +299,9 @@ classifier_cfg = [
     ["fc3", 512, 10, 1, BITWIDTH, 1, BITWIDTH],
 ]
 
+
+def vgg11_bn():
+    return VGG_elegant(make_layers(features_cfg, batch_norm=True))
 
 def vgg11_elegant():
     return VGG_elegant(make_layers(features_cfg))

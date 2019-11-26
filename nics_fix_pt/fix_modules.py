@@ -49,7 +49,8 @@ def get_fix_forward(cur_cls):
             # the running mean/var accumulattion is on quantitized mean/var,
             # which means it might fail to update the running mean/var
             # if the updating momentum is too small
-            self._buffers[n] = getattr(self, n)
+            updated_buffer = getattr(self, n)
+            self._buffers[n].copy_(updated_buffer)
         return res
     return fix_forward
 
@@ -330,27 +331,54 @@ class FixTopModule(Module):
                     )
 
     @staticmethod
-    def set_fix_method(self, method, grad=False):
-        for module in six.itervalues(self._modules):
+    def set_fix_method(self, method=None, method_by_type=None, method_by_name=None, grad=False):
+        for module_name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(
                 module, Activation_fix
             ):
                 fix_params = getattr(
                     module, "nf_fix_params" if not grad else "nf_fix_params_grad"
                 )
-                for n in fix_params:
-                    if "method" in fix_params[n]:
-                        ori_method = fix_params[n]["method"]
-                        if isinstance(ori_method, torch.autograd.Variable):
-                            ori_method.data.numpy()[0] = method
-                        elif torch.is_tensor(ori_method):
-                            ori_method.numpy()[0] = method
-                        else:
-                            fix_params[n]["method"] = method
+                if method_by_name is not None and module_name in method_by_name:
+                    for param_n, param_method in six.iteritems(method_by_name[module_name]):
+                        assert param_n in fix_params, \
+                            "{} is not a quantized parameter of module {}".format(
+                                param_n, module_name)
+                        _set_method(fix_params[param_n], param_method)
+                else:
+                    if method_by_type is not None:
+                        param_method_cfg = method_by_type.get(
+                            type(module).__name__,
+                            method_by_type.get(type(module), None))
+                    else:
+                        param_method_cfg = None
+                    if param_method_cfg is not None:
+                        # specifiedd by method_by_type
+                        for param_n, param_method in six.iteritems(param_method_cfg):
+                            assert param_n in fix_params, \
+                                "{} is not a quantized parameter of module {}".format(
+                                    param_n, module_name)
+                            _set_method(fix_params[param_n], param_method)
+                    elif method is not None:
+                        for param_n in fix_params:
+                            _set_method(fix_params[param_n], method)
             elif isinstance(module, FixTopModule):
                 module.set_fix_method(method, grad=grad)
             else:
                 FixTopModule.set_fix_method(module, method, grad=grad)
+
+# helpers
+def _set_method(param_cfg, new_method):
+    if new_method is None:
+        return
+    if "method" in param_cfg:
+        ori_method = param_cfg["method"]
+        if isinstance(ori_method, torch.autograd.Variable):
+            ori_method.data.numpy()[0] = new_method
+        elif torch.is_tensor(ori_method):
+            ori_method.numpy()[0] = new_method
+        else:
+            param_cfg["method"] = new_method
 
 
 nn_fix.Activation_fix = Activation_fix

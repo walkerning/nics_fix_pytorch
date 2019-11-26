@@ -46,3 +46,16 @@ def test_fix_state_dict(module_cfg):
     assert (
         dct_vars["param"].nfp_actual_data == module._parameters["param"]
     ).all()  # underhood float-point data
+
+
+def test_set_fix_method(test_network):
+    test_network.set_fix_method(method=0, method_by_type={
+        "BatchNorm2d_fix": {"running_mean": 2, "running_var": 2, "weight": 1, "bias": 0}
+    }, method_by_name={"conv1": {"weight": 2}})
+    assert int(test_network.bn1.nf_fix_params["weight"]["method"]) == 1
+    assert int(test_network.bn1.nf_fix_params["bias"]["method"]) == 0
+    assert int(test_network.bn1.nf_fix_params["running_mean"]["method"]) == 2
+    assert int(test_network.conv1.nf_fix_params["weight"]["method"]) == 2
+    assert int(test_network.conv1.nf_fix_params["bias"]["method"]) == 1
+    assert int(test_network.conv2.nf_fix_params["weight"]["method"]) == 0
+    assert int(test_network.conv2.nf_fix_params["bias"]["method"]) == 0

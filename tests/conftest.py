@@ -1,10 +1,49 @@
 import pytest
+import numpy as np
 import torch
 from torch.nn import Module
 from torch.nn import functional as F
 from torch.nn.parameter import Parameter
+import nics_fix_pt.nn_fix as nnf
 
+def _generate_default_fix_cfg(names, scale=0, bitwidth=8, method=0):
+    return {
+        n: {
+            "method": torch.autograd.Variable(
+                torch.IntTensor(np.array([method])), requires_grad=False
+            ),
+            "scale": torch.autograd.Variable(
+                torch.IntTensor(np.array([scale])), requires_grad=False
+            ),
+            "bitwidth": torch.autograd.Variable(
+                torch.IntTensor(np.array([bitwidth])), requires_grad=False
+            ),
+        }
+        for n in names
+    }
 
+class TestNetwork(nnf.FixTopModule):
+    def __init__(self):
+        super(TestNetwork, self).__init__()
+        self.fix_params = {}
+        for conv_name in ["conv1", "conv2"]:
+            self.fix_params[conv_name] = _generate_default_fix_cfg(
+                ["weight", "bias"], method=1, bitwidth=8)
+        for bn_name in ["bn1", "bn2"]:
+            self.fix_params[bn_name] = _generate_default_fix_cfg(
+                ["weight", "bias", "running_mean", "running_var"], method=1, bitwidth=8)
+        self.conv1 = nnf.Conv2d_fix(3, 64, (3, 3), padding=1,
+                                    nf_fix_params=self.fix_params["conv1"])
+        self.bn1 = nnf.BatchNorm2d_fix(64, nf_fix_params=self.fix_params["bn1"])
+        self.conv2 = nnf.Conv2d_fix(64, 128, (3, 3), padding=1,
+                                    nf_fix_params=self.fix_params["conv2"])
+        self.bn2 = nnf.BatchNorm2d_fix(128, nf_fix_params=self.fix_params["bn2"])
+
+@pytest.fixture
+def test_network():
+    return TestNetwork()
+
+# ----
 class TestModule(Module):
     def __init__(self, input_num):
         super(TestModule, self).__init__()
