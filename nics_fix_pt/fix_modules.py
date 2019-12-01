@@ -50,7 +50,8 @@ def get_fix_forward(cur_cls):
             # which means it might fail to update the running mean/var
             # if the updating momentum is too small
             updated_buffer = getattr(self, n)
-            self._buffers[n].copy_(updated_buffer)
+            if updated_buffer is not self._buffers[n]:
+                self._buffers[n].copy_(updated_buffer)
         return res
     return fix_forward
 
