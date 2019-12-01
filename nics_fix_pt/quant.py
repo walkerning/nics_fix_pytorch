@@ -21,15 +21,11 @@ def _do_quantitize(data, scale, bit_width):
     step = torch.pow(
         tensor_2, (scale_f - (bit_width - 1).float())
     )
-
-    minimum = -torch.pow(
-        tensor_2, scale_f
-    )
     step = step.to(data.device)
-    minimum = minimum.to(data.device)
 
-    # maximum = -minimum - step
+    minimum = -float(2. ** (scale.cpu().data.numpy()))
     maximum = -minimum
+    # maximum = -minimum - step
     # TODO: Even if the quantitize cfg is "auto", some overflow may occur,
     #       and maybe cause some problems.
     #       such as maybe weights won't be able to be trained to change scale
@@ -39,9 +35,7 @@ def _do_quantitize(data, scale, bit_width):
     #   small discrepancy between software simulation and actual hardware deployment.
     # * Modify the `new_scale` calculation.
     return (
-        torch.min(
-            torch.max(StraightThroughRound.apply(data / step) * step, minimum), maximum
-        ),
+        torch.clamp(StraightThroughRound.apply(data / step)*step, minimum, maximum),
         step,
     )
 
@@ -71,10 +65,30 @@ def quantitize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE
                 )
                 / np.log(2.0)
             )
+        elif range_method_v == RangeMethod.RANGE_MAX_TENPERCENT:
+            # FIXME: Too slow
+            new_scale = torch.ceil(
+                torch.log(
+                    torch.max(
+                        # torch.kthvalue(torch.abs(data.view(-1)), 9 * (data.nelement() // 10))[0],
+                        torch.topk(torch.abs(data.view(-1)), data.nelement() // 10)[0][-1],
+                        torch.tensor(EPS).float().to(data.device))
+                ) / np.log(2.0)
+            )
         elif range_method_v == RangeMethod.RANGE_3SIGMA:
             # raise NotImplementedError()
             new_boundary = torch.max(3*torch.std(data)+torch.abs(torch.mean(data)), torch.tensor(EPS).float().to(data.device),)
             new_scale = torch.ceil(torch.log(new_boundary) / np.log(2.0))
+
+        elif range_method_v == RangeMethod.RANGE_SWEEP:
+            SWEEP = 3
+            temp_scale = torch.ceil(torch.log(torch.max(
+                torch.max(abs(data)),
+                torch.tensor(EPS).float().to(data.device))) / np.log(2.0))
+            errors = torch.zeros(SWEEP).float().to(data.device)
+            for i in range(SWEEP):
+                errors[i] = torch.abs(_do_quantitize(data, temp_scale-i, bitwidth)[0] - data).sum()
+            new_scale = temp_scale - errors.argmin()
         else:
             raise NotImplementedError()
         scale.data[0] = new_scale

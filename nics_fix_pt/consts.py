@@ -1,6 +1,8 @@
 class RangeMethod:
     RANGE_MAX = 0
     RANGE_3SIGMA = 1
+    RANGE_MAX_TENPERCENT = 2
+    RANGE_SWEEP = 3
 
 
 class QuantizeMethod:
