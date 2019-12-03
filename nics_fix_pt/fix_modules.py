@@ -85,7 +85,7 @@ def register_fix_module(cls, register_name=None):
                 "and `nf_fix_params_grad` is optional."
             )
             self.nf_fix_params = kwargs.pop("nf_fix_params")
-            self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
+            self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {}) or {}
             cls.__init__(self, *args, **kwargs)
             self._register_fix_buffers()
             # avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
@@ -131,7 +131,7 @@ class Activation_fix(Module):
             kwargs["nf_fix_params"], dict
         ), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
-        self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
+        self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {}) or {}
         self.activation = None
 
     def forward(self, inputs):

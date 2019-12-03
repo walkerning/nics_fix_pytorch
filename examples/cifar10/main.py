@@ -16,35 +16,17 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import vgg
 
 import nics_fix_pt as nfp
 import nics_fix_pt.nn_fix as nnf
+from net import FixNet
 
-model_names = sorted(
-    name
-    for name in vgg.__dict__
-    if name.islower()
-    and not name.startswith("__")
-    and name.startswith("vgg")
-    and callable(vgg.__dict__[name])
-)
-
-
-parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
+parser = argparse.ArgumentParser(description="PyTorch Cifar10 Fixed-Point Training")
 parser.add_argument(
     "--gpu",
     metavar="GPUs",
     default="0",
     help="The gpu devices to use"
-)
-parser.add_argument(
-    "--arch",
-    "-a",
-    metavar="ARCH",
-    default="vgg11_elegant",
-    choices=model_names,
-    help="model architecture: " + " | ".join(model_names) + " (default: vgg19)",
 )
 parser.add_argument(
     "-j",
@@ -55,7 +37,7 @@ parser.add_argument(
     help="number of data loading workers (default: 4)",
 )
 parser.add_argument(
-    "--epoches",
+    "--epoch",
     default=150,
     type=int,
     metavar="N",
@@ -79,7 +61,7 @@ parser.add_argument(
 parser.add_argument(
     "--test-batch-size",
     type=int,
-    default=1000,
+    default=32,
     metavar="N",
     help="input batch size for testing (default: 1000)",
 )
@@ -123,6 +105,32 @@ parser.add_argument(
     help="checkpoint prefix (default: none)",
 )
 parser.add_argument(
+    "--float-bn",
+    default=False,
+    action="store_true",
+    help="quantize the bn layer"
+)
+parser.add_argument(
+    "--fix-grad",
+    default=False,
+    action="store_true",
+    help="quantize the gradients"
+)
+parser.add_argument(
+    "--range-method",
+    default=0,
+    choices=[0, 1, 3],
+    help=("range methods of data (including parameters, buffers, activations). "
+          "0: RANGE_MAX, 1: RANGE_3SIGMA, 3: RANGE_SWEEP")
+)
+parser.add_argument(
+    "--grad-range-method",
+    default=0,
+    choices=[0, 1, 3],
+    help=("range methods of gradients (including parameters, activations)."
+          " 0: RANGE_MAX, 1: RANGE_3SIGMA, 3: RANGE_SWEEP")
+)
+parser.add_argument(
     "-e",
     "--evaluate",
     dest="evaluate",
@@ -131,9 +139,6 @@ parser.add_argument(
 )
 parser.add_argument(
     "--pretrained", default="", type=str, metavar="PATH", help="use pre-trained model"
-)
-parser.add_argument(
-    "--half", dest="half", action="store_true", help="use half-precision(16-bit) "
 )
 parser.add_argument(
     "--save-dir",
@@ -194,9 +199,12 @@ def main():
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
 
-    model = vgg.__dict__[args.arch]()
-    for module in model.modules():
-        print(module)
+    model = FixNet(
+        fix_bn=not args.float_bn,
+        fix_grad=args.fix_grad,
+        range_method=args.range_method,
+        grad_range_method=args.grad_range_method
+    )
     model.print_fix_configs()
 
     model.cuda()
@@ -233,7 +241,7 @@ def main():
             print("=> no checkpoint found at '{}'".format(args.resume))
             assert os.path.isfile(args.pretrained)
 
-    cudnn.benchmark = True
+    # cudnn.benchmark = True
 
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
@@ -274,31 +282,18 @@ def main():
     # define loss function (criterion) and pptimizer
     criterion = nn.CrossEntropyLoss().cuda()
 
-    if args.half:
-        model.half()
-        criterion.half()
-
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=args.lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay,
     )
-    """
-    ignored_params = list(map(id, model.fc.parameters()))
-    base_params = filter(lambda p: id(p) not in ignored_params, model.parameters())
-    optimizer = torch.optim.SGD([
-            {'params': base_params},
-            {'params': model.fc.parameters(), 'lr': 5e-2}
-            ], 
-            lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    """
 
     if args.evaluate:
         validate(val_loader, model, parallel_model, criterion)
         return
 
-    for epoch in range(args.start_epoch, args.epoches):
+    for epoch in range(args.start_epoch, args.epoch):
         adjust_learning_rate(optimizer, epoch)
 
         # train for one epoch
@@ -343,8 +338,6 @@ def train(train_loader, model, p_model, criterion, optimizer, epoch):
         target = target.cuda(async=True)
         input_var = torch.autograd.Variable(input).cuda()
         target_var = torch.autograd.Variable(target)
-        if args.half:
-            input_var = input_var.half()
 
         # compute output
         output = p_model(input_var)
@@ -390,37 +383,34 @@ def validate(val_loader, model, p_model, criterion):
     _set_fix_method_eval_ori(model)
     model.eval()
 
-    for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True).cuda()
-        target_var = torch.autograd.Variable(target, volatile=True)
-
-        if args.half:
-            input_var = input_var.half()
-
-        # compute output
-        output = p_model(input_var)
-        loss = criterion(output, target_var)
-
-        output = output.float()
-        loss = loss.float()
-
-        # measure accuracy and record loss
-        prec1 = accuracy(output.data, target)[0]
-        losses.update(loss.item(), input.size(0))
-        top1.update(prec1.item(), input.size(0))
-
-        if i % args.print_freq == 0:
-            print(
-                "Test: [{0}/{1}]\t"
-                "Time {t}\t"
-                "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
-                "Prec@1 {top1.val:.3f}% ({top1.avg:.3f}%)".format(
-                    i, len(val_loader), t=time.time() - start, loss=losses, top1=top1
+    with torch.no_grad():
+        for i, (input, target) in enumerate(val_loader):
+            target = target.cuda(async=True)
+            input_var = torch.autograd.Variable(input).cuda()
+            target_var = torch.autograd.Variable(target)
+    
+            # compute output
+            output = p_model(input_var)
+            loss = criterion(output, target_var)
+    
+            output = output.float()
+            loss = loss.float()
+    
+            # measure accuracy and record loss
+            prec1 = accuracy(output.data, target)[0]
+            losses.update(loss.item(), input.size(0))
+            top1.update(prec1.item(), input.size(0))
+    
+            if i % args.print_freq == 0:
+                print(
+                    "Test: [{0}/{1}]\t"
+                    "Time {t}\t"
+                    "Loss {loss.val:.4f} ({loss.avg:.4f})\t"
+                    "Prec@1 {top1.val:.3f}% ({top1.avg:.3f}%)".format(
+                        i, len(val_loader), t=time.time() - start, loss=losses, top1=top1
+                    )
                 )
-            )
 
-    # print(accu)
     print(
         " * Prec@1 {top1.avg:.3f}%\tBest Prec@1 {best_prec1:.3f}%".format(
             top1=top1, best_prec1=best_prec1
@@ -458,7 +448,8 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch):
     """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.5 ** (epoch // 30))
+    # lr = args.lr * (0.5 ** (epoch // 30))
+    lr = args.lr * (0.5 ** (epoch // 10))
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
