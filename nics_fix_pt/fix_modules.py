@@ -9,6 +9,7 @@ import six
 
 import torch
 from torch.nn import Module
+import torch.nn.functional as F
 from . import nn_fix, utils, quant
 
 
@@ -144,6 +145,58 @@ class Activation_fix(Module):
             inputs["inputs"], fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=name
         )
         return self.activation
+
+class ConvBN_fix(Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, 
+                padding=0, dilation=1, groups=1, 
+                eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, **kwargs):
+        super(ConvBN_fix, self).__init__()
+        kwargs = _get_kwargs(self, kwargs)
+        assert "nf_fix_params" in kwargs and isinstance(
+            kwargs["nf_fix_params"], dict
+        ), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
+        self.nf_fix_params = kwargs.pop("nf_fix_params")
+        self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
+        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride, 
+                padding, dilation, groups, bias=False)
+        self.bn = torch.nn.BatchNorm2d(out_channels, eps, momentum, affine, track_running_stats)
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        self.kernel_size = self.conv.kernel_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.eps = eps
+        self.momentum = momentum
+        self.affine = affine
+        self.track_running_stats = track_running_stats
+        self.weight = self.conv.weight
+        self.bias = self.bn.bias
+
+    def forward(self, inputs):
+        out = self.conv(inputs)
+        out2 = self.bn(out)
+        inputs = {"inputs": inputs}
+        weight = self.conv.weight
+        scale = self.bn.weight
+        var = torch.var(out, dim=[0,2,3])
+        mean = torch.mean(out, dim=[0,2,3])
+        bias = self.bn.bias
+        eps = self.bn.eps
+        new_scale = torch.mul(scale, 1. / torch.sqrt(var + eps)).view(-1,1,1,1)
+        new_weight = torch.mul(weight, new_scale)
+        new_bias = bias - scale * mean / torch.sqrt(var + eps)
+        fix_cfg = self.nf_fix_params.get('weight', {})
+        fix_grad_cfg = self.nf_fix_params_grad.get('weight', {})
+        new_weight, _ = quant.quantitize(new_weight, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name="weight")
+        fix_cfg = self.nf_fix_params.get("bias")
+        fix_grad_cfg = self.nf_fix_params.get("bias", {})
+        new_bias, _ = quant.quantitize(new_bias, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name="bias")
+        convbn = F.conv2d(inputs["inputs"], new_weight, new_bias, self.stride, self.padding, self.dilation, self.groups)
+        object.__setattr__(self, 'weight', new_weight)
+        object.__setattr__(self, 'bias', new_bias)
+        return convbn
 
 
 class FixTopModule(Module):
@@ -384,3 +437,4 @@ def _set_method(param_cfg, new_method):
 
 nn_fix.Activation_fix = Activation_fix
 nn_fix.FixTopModule = FixTopModule
+nn_fix.ConvBN_fix = ConvBN_fix
