@@ -191,3 +191,21 @@ def test_fix_update_auto(module_cfg, case):
         -module._parameters["param"].detach(), case["output"]
     ).all()  # updated parameter should be - lr * gradient
     assert cfg["param"]["scale"] == case["grad_scale"]  # scale
+
+def test_ConvBN_fix():
+    from nics_fix_pt.nn_fix import ConvBN_fix
+    # float forward and combine forward get the same results
+    module = ConvBN_fix(3, 32, nf_fix_params={}).cuda()
+    module.train()
+    data = torch.tensor(np.random.rand(128, 3, 32, 32).astype(np.float32)).cuda()
+    comb_out = module(data)
+    float_out = module.bn(module.conv(data))
+    assert (float_out - comb_out < 1e-3).all()
+
+    module.eval()
+    module = ConvBN_fix(3, 32, nf_fix_params={}).cuda()
+    data = torch.tensor(np.random.rand(128, 3, 32, 32).astype(np.float32)).cuda()
+    comb_out = module(data)
+    float_out = module.bn(module.conv(data))
+    assert (float_out - comb_out < 1e-3).all()
+    

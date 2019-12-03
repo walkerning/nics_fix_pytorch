@@ -23,22 +23,20 @@ from net import FixNet
 
 parser = argparse.ArgumentParser(description="PyTorch Cifar10 Fixed-Point Training")
 parser.add_argument(
+    "--save-dir",
+    required=True,
+    help="The directory used to save the trained models",
+    type=str,
+)
+parser.add_argument(
     "--gpu",
     metavar="GPUs",
     default="0",
     help="The gpu devices to use"
 )
 parser.add_argument(
-    "-j",
-    "--workers",
-    default=4,
-    type=int,
-    metavar="N",
-    help="number of data loading workers (default: 4)",
-)
-parser.add_argument(
     "--epoch",
-    default=150,
+    default=100,
     type=int,
     metavar="N",
     help="number of total epochs to run",
@@ -133,7 +131,6 @@ parser.add_argument(
 parser.add_argument(
     "-e",
     "--evaluate",
-    dest="evaluate",
     action="store_true",
     help="evaluate model on validation set",
 )
@@ -141,11 +138,10 @@ parser.add_argument(
     "--pretrained", default="", type=str, metavar="PATH", help="use pre-trained model"
 )
 parser.add_argument(
-    "--save-dir",
-    dest="save_dir",
-    help="The directory used to save the trained models",
-    default="save_temp",
-    type=str,
+    "--bitwidth-data", default=8, type=int, help="the bitwidth of parameters/buffers/activations"
+)
+parser.add_argument(
+    "--bitwidth-grad", default=16, type=int, help="the bitwidth of gradients of parameters/activations"
 )
 
 best_prec1 = 90
@@ -191,6 +187,7 @@ def _set_fix_method_eval(model):
 def main():
     global args, best_prec1
     args = parser.parse_args()
+    print("cmd line arguments: ", args)
 
     gpus = [int(d) for d in args.gpu.split(",")]
     torch.cuda.set_device(gpus[0])
@@ -203,7 +200,9 @@ def main():
         fix_bn=not args.float_bn,
         fix_grad=args.fix_grad,
         range_method=args.range_method,
-        grad_range_method=args.grad_range_method
+        grad_range_method=args.grad_range_method,
+        bitwidth_data=args.bitwidth_data,
+        bitwidth_grad=args.bitwidth_grad
     )
     model.print_fix_configs()
 
@@ -263,7 +262,7 @@ def main():
         ),
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.workers,
+        num_workers=4,
         pin_memory=True,
     )
 
@@ -275,7 +274,7 @@ def main():
         ),
         batch_size=args.test_batch_size,
         shuffle=False,
-        num_workers=args.workers,
+        num_workers=2,
         pin_memory=True,
     )
 
@@ -318,8 +317,8 @@ def main():
                     "checkpoint_{}_{:.3f}.tar".format(args.prefix, best_prec1),
                 ),
             )
+            model.print_fix_configs()
 
-    # model.print_fix_configs()
     print("Best acc: {}".format(best_prec1))
 
 
@@ -447,12 +446,11 @@ class AverageMeter(object):
 
 
 def adjust_learning_rate(optimizer, epoch):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    # lr = args.lr * (0.5 ** (epoch // 30))
+    """Sets the learning rate to the initial LR decayed by 0.5 every 10 epochs"""
     lr = args.lr * (0.5 ** (epoch // 10))
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
-
+    print("Epoch {}: lr: {}".format(epoch, lr))
 
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""

@@ -26,6 +26,72 @@ def test_auto_register():
     fix_module = nnf.Linear_another2_fix(3, 1, nf_fix_params={})
 
 
+def test_save_state_dict(tmp_path):
+    import os
+    import numpy as np
+    import torch
+    from torch import nn
+
+    import nics_fix_pt as nfp
+    from nics_fix_pt import nn_fix as nnf
+    from nics_fix_pt.utils import _generate_default_fix_cfg
+
+    class _View(nn.Module):
+        def __init__(self):
+            super(_View, self).__init__()
+
+        def forward(self, inputs):
+            return inputs.view(inputs.shape[0], -1)
+    data = torch.tensor(np.random.rand(8, 3, 4, 4).astype(np.float32)).cuda()
+    ckpt = os.path.join(tmp_path, "tmp.pt")
+
+    model = nn.Sequential(*[
+        nnf.Conv2d_fix(3, 10, kernel_size=3, padding=1,
+                       nf_fix_params=_generate_default_fix_cfg(
+                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           method=nfp.FIX_FIXED)),
+        nnf.Conv2d_fix(10, 20, kernel_size=3, padding=1,
+                       nf_fix_params=_generate_default_fix_cfg(
+                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           method=nfp.FIX_FIXED)),
+        nnf.Activation_fix(
+            nf_fix_params=_generate_default_fix_cfg(
+                ["activation"], scale=np.random.randint(low=-10, high=10),
+                method=nfp.FIX_FIXED)),
+        nn.AdaptiveAvgPool2d(1),
+        _View(),
+        nnf.Linear_fix(20, 10, nf_fix_params=_generate_default_fix_cfg(
+            ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+            method=nfp.FIX_FIXED))
+    ])
+    model.cuda()
+    pre_results = model(data)
+    torch.save(model.state_dict(), ckpt)
+    model2 = nn.Sequential(*[
+        nnf.Conv2d_fix(3, 10, kernel_size=3, padding=1,
+                       nf_fix_params=_generate_default_fix_cfg(
+                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           method=nfp.FIX_FIXED)),
+        nnf.Conv2d_fix(10, 20, kernel_size=3, padding=1,
+                       nf_fix_params=_generate_default_fix_cfg(
+                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           method=nfp.FIX_FIXED)),
+        nnf.Activation_fix(
+            nf_fix_params=_generate_default_fix_cfg(
+                ["activation"], scale=np.random.randint(low=-10, high=10),
+                method=nfp.FIX_FIXED)),
+        nn.AdaptiveAvgPool2d(1),
+        _View(),
+        nnf.Linear_fix(20, 10, nf_fix_params=_generate_default_fix_cfg(
+            ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+            method=nfp.FIX_FIXED))
+    ])
+    model2.cuda()
+    model2.load_state_dict(torch.load(ckpt))
+    post_results = model2(data)
+    assert (post_results - pre_results < 1e-3).all()
+
+
 def test_fix_state_dict(module_cfg):
     import torch
     from nics_fix_pt.nn_fix import FixTopModule

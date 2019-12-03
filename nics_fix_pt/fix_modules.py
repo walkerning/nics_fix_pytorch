@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from . import nn_fix, utils, quant
 
 
+# ---- helpers ----
 def _get_kwargs(self, true_kwargs):
     default_kwargs = utils.get_kwargs(self.__class__)
     if not default_kwargs:
@@ -23,6 +24,36 @@ def _get_kwargs(self, true_kwargs):
     kwargs.update(true_kwargs)
     return kwargs
 
+def _get_fix_cfg(self, name, grad=False):
+    if not grad:
+        cfg = self.nf_fix_params.get(name, {})
+        if "scale" in cfg:
+            cfg["scale"] = self._buffers["{}_fp_scale".format(name)]
+    else:
+        cfg = self.nf_fix_params_grad.get(name, {})
+        if "scale" in cfg:
+            cfg["scale"] = self._buffers["{}_grad_fp_scale".format(name)]
+    return cfg
+
+def _register_fix_buffers(self, patch_register=True):
+    # register scale tensors as buffers, for correct use in multi-gpu data parallel model
+    avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
+    for name, cfg in six.iteritems(self.nf_fix_params):
+        if patch_register and name not in avail_keys:
+            warnings.warn(("{} not available in {}, this specific fixed config "
+                           "will not have effects").format(name, self))
+        if "scale" in cfg:
+            self.register_buffer("{}_fp_scale".format(name), cfg["scale"])
+
+    avail_keys = list(self._parameters.keys())
+    for name, cfg in six.iteritems(self.nf_fix_params_grad):
+        if patch_register and name not in avail_keys:
+            warnings.warn(("{} not available in {}, this specific grads fixed config "
+                           "will not have effects").format(name, self))
+        if "scale" in cfg:
+            self.register_buffer("{}_grad_fp_scale".format(name), cfg["scale"])
+
+# --------
 
 def get_fix_forward(cur_cls):
     #pylint: disable=protected-access
@@ -32,15 +63,15 @@ def get_fix_forward(cur_cls):
         for n, param in six.iteritems(self._parameters):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
-            fix_cfg = self._get_fix_cfg(n)
-            fix_grad_cfg = self._get_fix_cfg(n, grad=True)
+            fix_cfg = _get_fix_cfg(self, n)
+            fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
             set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         for n, param in six.iteritems(self._buffers):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
-            fix_cfg = self._get_fix_cfg(n)
-            fix_grad_cfg = self._get_fix_cfg(n, grad=True)
+            fix_cfg = _get_fix_cfg(self, n)
+            fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
             set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
@@ -88,41 +119,13 @@ def register_fix_module(cls, register_name=None):
             self.nf_fix_params = kwargs.pop("nf_fix_params")
             self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {}) or {}
             cls.__init__(self, *args, **kwargs)
-            self._register_fix_buffers()
+            _register_fix_buffers(self, patch_register=True)
             # avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
             # self.nf_fix_params = {k: self.nf_fix_params[k]
             #                       for k in avail_keys if k in self.nf_fix_params}
             # self.nf_fix_params_grad = {k: self.nf_fix_params_grad[k]
             #                            for k in avail_keys if k in self.nf_fix_params_grad}
 
-        def _get_fix_cfg(self, name, grad=False):
-            if not grad:
-                cfg = self.nf_fix_params.get(name, {})
-                if "scale" in cfg:
-                    cfg["scale"] = self._buffers["{}_fp_scale".format(name)]
-            else:
-                cfg = self.nf_fix_params_grad.get(name, {})
-                if "scale" in cfg:
-                    cfg["scale"] = self._buffers["{}_grad_fp_scale".format(name)]
-            return cfg
-
-        def _register_fix_buffers(self):
-            # register scale tensors as buffers, for correct use in multi-gpu data parallel model
-            avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
-            for name, cfg in six.iteritems(self.nf_fix_params):
-                if name not in avail_keys:
-                    warnings.warn(("{} not available in {}, this specific fixed config "
-                                   "will not have effects").format(name, self))
-                if "scale" in cfg:
-                    self.register_buffer("{}_fp_scale".format(name), cfg["scale"])
-
-            avail_keys = list(self._parameters.keys())
-            for name, cfg in six.iteritems(self.nf_fix_params_grad):
-                if name not in avail_keys:
-                    warnings.warn(("{} not available in {}, this specific grads fixed config "
-                                   "will not have effects").format(name, self))
-                if "scale" in cfg:
-                    self.register_buffer("{}_grad_fp_scale".format(name), cfg["scale"])
 
 class Activation_fix(Module):
     def __init__(self, **kwargs):
@@ -134,6 +137,9 @@ class Activation_fix(Module):
         self.nf_fix_params = kwargs.pop("nf_fix_params")
         self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {}) or {}
         self.activation = None
+
+        # register scale as buffers
+        _register_fix_buffers(self, patch_register=False)
 
     def forward(self, inputs):
         if not isinstance(inputs, dict):
@@ -147,8 +153,8 @@ class Activation_fix(Module):
         return self.activation
 
 class ConvBN_fix(Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, 
-                padding=0, dilation=1, groups=1, 
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
+                padding=0, dilation=1, groups=1,
                 eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, **kwargs):
         super(ConvBN_fix, self).__init__()
         kwargs = _get_kwargs(self, kwargs)
@@ -156,10 +162,23 @@ class ConvBN_fix(Module):
             kwargs["nf_fix_params"], dict
         ), "Must specifiy `nf_fix_params` keyword arguments, and `nf_fix_params_grad` is optional."
         self.nf_fix_params = kwargs.pop("nf_fix_params")
-        self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {})
-        self.conv = torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride, 
-                padding, dilation, groups, bias=False)
+        self.nf_fix_params_grad = kwargs.pop("nf_fix_params_grad", {}) or {}
+        if self.nf_fix_params_grad:
+            warnings.warn(
+                "Gradient fixed-point cfgs will NOT take effect! Because, "
+                "Gradient quantization is usually used to simulate training on hardware. "
+                "However, merged ConvBN is designed for mitigating the discrepancy between "
+                "training and behaviour on deploy-only hardware; "
+                "and enable relatively more accurate running mean/var accumulation "
+                "during software training. Use these two together might not make sense."
+            )
+
+        # init the two floating-point sub-modules
+        self.conv = torch.nn.Conv2d(
+            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=False)
         self.bn = torch.nn.BatchNorm2d(out_channels, eps, momentum, affine, track_running_stats)
+
+        # conv and bn attributes
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
@@ -171,32 +190,51 @@ class ConvBN_fix(Module):
         self.momentum = momentum
         self.affine = affine
         self.track_running_stats = track_running_stats
+
+        # the quantized combined weights and bias
         self.weight = self.conv.weight
         self.bias = self.bn.bias
 
+        # register scale as buffers
+        _register_fix_buffers(self, patch_register=False)
+
     def forward(self, inputs):
-        out = self.conv(inputs)
-        out2 = self.bn(out)
+        if self.training:
+            out = self.conv(inputs)
+            # dummy output, just to accumulate running mean and running var (floating-point)
+            _ = self.bn(out)
+
+            # calculate batch var/mean
+            mean = torch.mean(out, dim=[0, 2, 3])
+            var = torch.var(out, dim=[0, 2, 3])
+        else:
+            mean = self.bn.running_mean
+            var = self.bn.running_var
+
         inputs = {"inputs": inputs}
-        weight = self.conv.weight
-        scale = self.bn.weight
-        var = torch.var(out, dim=[0,2,3])
-        mean = torch.mean(out, dim=[0,2,3])
-        bias = self.bn.bias
-        eps = self.bn.eps
-        new_scale = torch.mul(scale, 1. / torch.sqrt(var + eps)).view(-1,1,1,1)
-        new_weight = torch.mul(weight, new_scale)
-        new_bias = bias - scale * mean / torch.sqrt(var + eps)
-        fix_cfg = self.nf_fix_params.get('weight', {})
-        fix_grad_cfg = self.nf_fix_params_grad.get('weight', {})
-        new_weight, _ = quant.quantitize(new_weight, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name="weight")
-        fix_cfg = self.nf_fix_params.get("bias")
-        fix_grad_cfg = self.nf_fix_params.get("bias", {})
-        new_bias, _ = quant.quantitize(new_bias, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name="bias")
-        convbn = F.conv2d(inputs["inputs"], new_weight, new_bias, self.stride, self.padding, self.dilation, self.groups)
-        object.__setattr__(self, 'weight', new_weight)
-        object.__setattr__(self, 'bias', new_bias)
-        return convbn
+        # parameters/buffers to be combined
+        bn_scale = self.bn.weight
+        bn_bias = self.bn.bias
+        bn_eps = self.bn.eps
+        conv_weight = self.conv.weight
+        conv_bias = self.conv.bias or 0. # could be None
+
+        # combine new weights/bias
+        comb_weight = conv_weight * (bn_scale / torch.sqrt(var + bn_eps)).view(-1, 1, 1, 1)
+        comb_bias = bn_bias + (conv_bias - mean) * bn_scale / torch.sqrt(var + bn_eps)
+
+        # quantize the combined weights/bias (as what would be done in hardware deploy scenario)
+        comb_weight, _ = quant.quantitize(comb_weight, self.nf_fix_params.get("weight", {}), {},
+                                          kwarg_cfg=inputs, name="weight")
+        comb_bias, _ = quant.quantitize(comb_bias, self.nf_fix_params.get("bias", {}), {},
+                                        kwarg_cfg=inputs, name="bias")
+
+        # run the fixed-point combined convbn
+        convbn_out = F.conv2d(inputs["inputs"], comb_weight, comb_bias,
+                              self.stride, self.padding, self.dilation, self.groups)
+        object.__setattr__(self, "weight", comb_weight)
+        object.__setattr__(self, "bias", comb_bias)
+        return convbn_out
 
 
 class FixTopModule(Module):
