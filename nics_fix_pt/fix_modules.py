@@ -65,20 +65,20 @@ def get_fix_forward(cur_cls):
                 continue
             fix_cfg = _get_fix_cfg(self, n)
             fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
-            set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         for n, param in six.iteritems(self._buffers):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
             fix_cfg = _get_fix_cfg(self, n)
             fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
-            set_n, _ = quant.quantitize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
             object.__setattr__(self, n, set_n)
         res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
         for n, param in six.iteritems(self._buffers):
             # set buffer back, as there will be no gradient, just in-place modification
             # FIXME: For fixed-point batch norm,
-            # the running mean/var accumulattion is on quantitized mean/var,
+            # the running mean/var accumulattion is on quantized mean/var,
             # which means it might fail to update the running mean/var
             # if the updating momentum is too small
             updated_buffer = getattr(self, n)
@@ -147,7 +147,7 @@ class Activation_fix(Module):
         name = "activation"
         fix_cfg = self.nf_fix_params.get(name, {})
         fix_grad_cfg = self.nf_fix_params_grad.get(name, {})
-        self.activation, _ = quant.quantitize(
+        self.activation, _ = quant.quantize(
             inputs["inputs"], fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=name
         )
         return self.activation
@@ -224,9 +224,9 @@ class ConvBN_fix(Module):
         comb_bias = bn_bias + (conv_bias - mean) * bn_scale / torch.sqrt(var + bn_eps)
 
         # quantize the combined weights/bias (as what would be done in hardware deploy scenario)
-        comb_weight, _ = quant.quantitize(comb_weight, self.nf_fix_params.get("weight", {}), {},
+        comb_weight, _ = quant.quantize(comb_weight, self.nf_fix_params.get("weight", {}), {},
                                           kwarg_cfg=inputs, name="weight")
-        comb_bias, _ = quant.quantitize(comb_bias, self.nf_fix_params.get("bias", {}), {},
+        comb_bias, _ = quant.quantize(comb_bias, self.nf_fix_params.get("bias", {}), {},
                                         kwarg_cfg=inputs, name="bias")
 
         # run the fixed-point combined convbn
