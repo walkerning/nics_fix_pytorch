@@ -18,12 +18,11 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
     when sym is not true, the input scale will be 2-value tensor [min,max]
     by defalutm the scale is a single fp-value, denoting range [-max, max]
     '''
-    # The grouping are only applied for conv Parts
-    # print(data.shape)
+    # The grouping are only applied for conv/fc weight/data, with the shape of [x,x,x,x]
+    # bn params & bias with the shape of [x,x]
     if len(data.shape)<4:
         group = False
 
-        
     bit_width = bit_width.to(data.device)
     tensor_2 = torch.autograd.Variable(torch.FloatTensor([2.0]),
                                        requires_grad=False).to(data.device)
@@ -49,6 +48,7 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
         maxs = maxs.reshape(-1,1,1,1).expand_as(data)
         mins = mins.reshape(-1,1,1,1).expand_as(data)
         data_to_devise = dynamic_range.reshape(-1,1,1,1)
+    # Maybe we should split activation/weight also the grad for this
     elif group == "channel":
         maxs = maxs.reshape(1,-1,1,1).expand_as(data)
         mins = mins.reshape(1,-1,1,1).expand_as(data)
@@ -56,36 +56,18 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
     else:
         data_to_devise = dynamic_range
 
-    
     step = data_to_devise/torch.pow(2, bit_width)
 
     if stochastic:
         output = StraightThroughStochasticRound.apply(data / step)*step
     else:
         output = StraightThroughRound.apply(data / step)*step
-
-    # Since torch.clamp dose not support clamp with multiple value, so here is an alternate
+    # torch.clamp dose not support clamp with multiple value, so using max(min) as alternative
     if group is not False:
         output = torch.min(torch.max(mins,output), maxs)
     else:
         output = torch.clamp(output,float(mins),float(maxs))
 
-
-
-
-
-    # Symmetric Rounding
-    # minimum = -float(2. ** (scale.cpu().data.numpy()))
-    # maximum = -minimum
-    # maximum = -minimum - step
-    # TODO: Even if the quantize cfg is "auto", some overflow may occur,
-    #       and maybe cause some problems.
-    #       such as maybe weights won't be able to be trained to change scale
-    #       if the learning rate is not big enough.
-    # Two possible solutions:
-    # * Do not minus step at maximum when training on software, this may cause some
-    #   small discrepancy between software simulation and actual hardware deployment.
-    # * Modify the `new_scale` calculation.
     return (
         output,
         step,
@@ -119,11 +101,10 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
 
     # Avoid extreme value
     EPS = torch.cuda.FloatTensor(max_data.shape).fill_(1e-5)
-    max_data = torch.max(max_data, EPS)
-    # min_data = torch.max(min_data, EPS) # FIXME: this could be useless since min_data could be pos/neg
+    if not zero_point:
+        max_data = torch.max(torch.max(max_data.abs(), min_data.abs()),EPS)
 
     method_v = get_int(method)
-    # EPS = torch.cuda.FloatTensor([1]).fill_(1e-5)
 
     if method_v == QuantizeMethod.FIX_NONE:
         return data, None
@@ -131,19 +112,18 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
         range_method_v = get_int(range_method)
         if range_method_v == RangeMethod.RANGE_MAX:
             if float_scale:
-                # Only support float scale with zero-point for now
                 if zero_point:
                     new_scale = torch.stack([min_data, max_data])
                     scale.data = new_scale
                     return _do_quantize(data, scale, bitwidth, stochastic=stochastic,symmetric=False, group=group)
                 else:
-                    new_scale = max_data
-                    scale.data = new_scale
+                    scale.data = max_data
                     return _do_quantize(data, scale, bitwidth, stochastic=stochastic,symmetric=True, group=group)
             else:
                 new_scale = torch.pow(2,torch.ceil(
                     torch.log(max_data)
-                    )/torch.cuda.FloatTensor([1]).fill_(np.log(2.)))
+                    /torch.cuda.FloatTensor([1]).fill_(np.log(2.))))
+
 
                 scale.data = new_scale
                 return _do_quantize(data, scale, bitwidth, stochastic=stochastic,group=group)
@@ -186,21 +166,33 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
 
     elif method_v == QuantizeMethod.FIX_FIXED:
 
+        if group == "batch" and len(data.shape)==4:
+            max_data = data.view(data.shape[0],-1).max(dim=1)[0]
+            min_data = data.view(data.shape[0],-1).min(dim=1)[0]
+        if group == "channel" and len(data.shape)==4:
+            max_data = data.view(data.shape[1],-1).max(dim=1)[0]
+            min_data = data.view(data.shape[1],-1).min(dim=1)[0]
+        else:
+            max_data = data.max()
+            min_data = data.min()
+
+        EPS = torch.cuda.FloatTensor(max_data.shape).fill_(1e-5)
+        if not zero_point:
+            max_data = torch.max(torch.max(max_data.abs(), min_data.abs()),EPS)
+
         # TODO: Check whether float_scale automatically adjust through inference
         # If float_scale, do as FIX_AUTO does
         if float_scale:
-            # Only support float scale with zero-point for now
             if zero_point:
-                new_scale = [data.min(), data.max()]
-                scale.data = torch.FloatTensor(new_scale)
+                new_scale = torch.stack([min_data, max_data])
+                scale.data = new_scale
                 return _do_quantize(data, scale, bitwidth, stochastic=stochastic,symmetric=False)
             else:
-                EPS = 1e-5
-                new_scale = torch.max(torch.max(torch.abs(data)),torch.cuda.FloatTensor([1]).fill_(EPS))
-                scale.data = new_scale
+                scale.data = max_data
                 return _do_quantize(data, scale, bitwidth, stochastic=stochastic,symmetric=True)
         else:
-            return _do_quantize(data, scale, bitwidth,stochastic=stochastic, symmetric=not zero_point)
+            # donot use new_scale when using power-of-2 scale
+            return _do_quantize(data, scale, bitwidth,stochastic=stochastic, symmetric=not zero_point, group=group)
 
     raise Exception("Quantitize method not legal: {}".format(method_v))
 
@@ -218,6 +210,7 @@ class StraightThroughRound(torch.autograd.Function):
 class StraightThroughStochasticRound(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x):
+        # FIXME: Wrong Stochatsic Method, independent stochastic for each element, could lead to even worse perf.
         # The Binary tensor denoting whether ceil or not, closer to ceil means for probabily choose ceil
         # return x.floor() + (torch.rand(x.shape).to(x.device) > x.ceil() - x)*torch.ones(x.shape).to(x.device)
         # out =  x.floor() + (torch.cuda.FloatTensor(x.shape).uniform_() > x.ceil() - x)*torch.cuda.FloatTensor(x.shape).fill_(1.)
@@ -258,7 +251,6 @@ def quantize(param, fix_cfg={}, fix_grad_cfg={}, kwarg_cfg={}, name=""):
     step = 0
     # quantize data
     out_param = param
-    # TODO: Insert grouping method here
 
     if (
         isinstance(method, torch.autograd.Variable)
