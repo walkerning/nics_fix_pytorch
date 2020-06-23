@@ -16,18 +16,18 @@ __all__ = ["quantize"]
 def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group=False):
     '''
     when sym is not true, the input scale will be 2-value tensor [min,max]
-    by defalutm the scale is a single fp-value, denoting range [-max, max]
+    by defalutm the data_to_devise.device, bit_width.devicescale is a single fp-value, denoting range [-max, max]
     '''
     # The grouping are only applied for conv/fc weight/data, with the shape of [x,x,x,x]
     # bn params & bias with the shape of [x,x]
     if len(data.shape)<4:
         group = False
 
+    scale = scale.to(data.device)
     bit_width = bit_width.to(data.device)
     tensor_2 = torch.autograd.Variable(torch.FloatTensor([2.0]),
                                        requires_grad=False).to(data.device)
     if symmetric:
-        # assert len(scale) == 1
         dynamic_range=2*scale
         maxs = scale
         mins = scale*(-1)
@@ -38,17 +38,15 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
         constraint the range, here for simplicity of software simulation,
         we simply define its range
         '''
-        # assert len(scale) == 2
         dynamic_range = scale[1] - scale[0]
         maxs = scale[1]
         mins = scale[0]
 
-    # TODO: add different grouping methods here
     if group == "batch":
         maxs = maxs.reshape(-1,1,1,1).expand_as(data)
         mins = mins.reshape(-1,1,1,1).expand_as(data)
         data_to_devise = dynamic_range.reshape(-1,1,1,1)
-    # Maybe we should split activation/weight also the grad for this
+    # MAYBE we should split activation/weight also the grad for this
     elif group == "channel":
         maxs = maxs.reshape(1,-1,1,1).expand_as(data)
         mins = mins.reshape(1,-1,1,1).expand_as(data)
@@ -56,7 +54,7 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
     else:
         data_to_devise = dynamic_range
 
-    step = data_to_devise/torch.pow(2, bit_width)
+    step = data_to_devise/torch.pow(2, bit_width).float()
 
     if stochastic:
         output = StraightThroughStochasticRound.apply(data / step)*step
@@ -74,7 +72,7 @@ def _do_quantize(data, scale, bit_width, symmetric=True, stochastic=False, group
     )
 
 
-def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_MAX, stochastic=False, float_scale=True, zero_point=True, group=False):
+def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_MAX, stochastic=False, float_scale=False, zero_point=False, group=False):
     '''
     stochastic - stochastic rounding
     range_method - how to decide dynamic range
@@ -89,10 +87,10 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
         return data, None
 
     if group == "batch" and len(data.shape)==4:
-        # Only applied for conv units 
+        # only applied for conv units 
         max_data = data.view(data.shape[0],-1).max(dim=1)[0]
         min_data = data.view(data.shape[0],-1).min(dim=1)[0]
-    if group == "channel" and len(data.shape)==4:
+    elif group == "channel" and len(data.shape)==4:
         max_data = data.view(data.shape[1],-1).max(dim=1)[0]
         min_data = data.view(data.shape[1],-1).min(dim=1)[0]
     else:
@@ -100,7 +98,8 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
         min_data = data.min()
 
     # Avoid extreme value
-    EPS = torch.cuda.FloatTensor(max_data.shape).fill_(1e-5)
+    EPS = torch.FloatTensor(max_data.shape).fill_(1e-5)
+    EPS = EPS.to(max_data.device)
     if not zero_point:
         max_data = torch.max(torch.max(max_data.abs(), min_data.abs()),EPS)
 
@@ -110,6 +109,8 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
         return data, None
     elif method_v == QuantizeMethod.FIX_AUTO:
         range_method_v = get_int(range_method)
+        if float_scale and range_method_v != RangeMethod.RANGE_MAX:
+            raise NotImplementedError("Now Only Support Float_Scale with Range-Max")
         if range_method_v == RangeMethod.RANGE_MAX:
             if float_scale:
                 if zero_point:
@@ -122,8 +123,7 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
             else:
                 new_scale = torch.pow(2,torch.ceil(
                     torch.log(max_data)
-                    /torch.cuda.FloatTensor([1]).fill_(np.log(2.))))
-
+                    /torch.FloatTensor([1]).fill_(np.log(2.)).to(max_data.device)))
 
                 scale.data = new_scale
                 return _do_quantize(data, scale, bitwidth, stochastic=stochastic,group=group)
@@ -136,16 +136,15 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
                         # torch.kthvalue(torch.abs(data.view(-1)), 9 * (data.nelement() // 10))[0],
                         torch.topk(torch.abs(data.view(-1)), data.nelement() // 10)[0][-1],
                         # torch.tensor(EPS).float().to(data.device))
-                        torch.cuda.FloatTensor(1).fill_(EPS))
+                        torch.FloatTensor(1).fill_(EPS).to(data.device))
                 ) / torch.cuda.FloatTensor([1]).fill_(np.log(2.0))
             ))
             return _do_quantize(data, scale, bitwidth, stochastic=stochastic)
 
         elif range_method_v == RangeMethod.RANGE_3SIGMA:
-            new_scale = torch.ceil(torch.log(new_boundary))
             new_boundary = torch.max(3*torch.std(data)+torch.abs(torch.mean(data)), torch.tensor(EPS).float().to(data.device),)
             new_scale = torch.pow(2,torch.ceil(torch.log(new_boundary) / np.log(2.0)))
-            scale = new_scale
+            scale.data = new_scale
             return _do_quantize(data, scale, bitwidth, stochastic=stochastic, symmetric=not zero_point)
 
         elif range_method_v == RangeMethod.RANGE_SWEEP:
@@ -176,7 +175,8 @@ def quantize_cfg(data, scale, bitwidth, method, range_method=RangeMethod.RANGE_M
             max_data = data.max()
             min_data = data.min()
 
-        EPS = torch.cuda.FloatTensor(max_data.shape).fill_(1e-5)
+        EPS = torch.FloatTensor(max_data.shape).fill_(1e-5)
+        EPS = EPS.to(max_data.device)
         if not zero_point:
             max_data = torch.max(torch.max(max_data.abs(), min_data.abs()),EPS)
 
@@ -215,7 +215,7 @@ class StraightThroughStochasticRound(torch.autograd.Function):
         # return x.floor() + (torch.rand(x.shape).to(x.device) > x.ceil() - x)*torch.ones(x.shape).to(x.device)
         # out =  x.floor() + (torch.cuda.FloatTensor(x.shape).uniform_() > x.ceil() - x)*torch.cuda.FloatTensor(x.shape).fill_(1.)
         # out =  x.floor() + ((x.ceil() - x) < torch.cuda.FloatTensor([1]).fill_(np.random.uniform()))*torch.cuda.FloatTensor(x.shape).fill_(1.)
-        noise = torch.cuda.FloatTensor(x.shape).uniform_(-0.5,0.5)
+        noise = torch.FloatTensor(x.shape).uniform_(-0.5,0.5).to(x.device)
         x.add_(noise)
         return x
 

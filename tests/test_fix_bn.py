@@ -13,7 +13,7 @@ from nics_fix_pt import nn_fix as nnf
     "case", [{"input_num": 3, "momentum": 0.5, "inputs": [[1, 1, 0], [2, 1, 2]]}]
 )
 def test_fix_bn_test_auto(case):
-    # TEST: the first update is the same (not quantitized)
+    # TEST: the first update is the same (not quantized)
     bn_fix = nnf.BatchNorm1d_fix(
         case["input_num"],
         nf_fix_params={
@@ -39,7 +39,7 @@ def test_fix_bn_test_auto(case):
     )
     out_fix = bn_fix(inputs)
     out = bn(inputs)
-    assert (bn.running_mean == bn_fix.running_mean).all()  # not quantitized here
+    assert (bn.running_mean == bn_fix.running_mean).all()  # not quantized here
     assert (bn.running_var == bn_fix.running_var).all()
     assert (out == out_fix).all()
 
@@ -47,11 +47,11 @@ def test_fix_bn_test_auto(case):
     bn_fix.train(False)
     bn.train(False)
     out_fix = bn_fix(inputs)
-    # Let's explicit quantitize the mean/var of the normal BN model for comparison
+    # Let's explicit quantize the mean/var of the normal BN model for comparison
     object.__setattr__(
         bn,
         "running_mean",
-        nfp.quant.quantitize_cfg(
+        nfp.quant.quantize_cfg(
             bn.running_mean,
             **{
                 "method": nfp.FIX_AUTO,
@@ -63,7 +63,7 @@ def test_fix_bn_test_auto(case):
     object.__setattr__(
         bn,
         "running_var",
-        nfp.quant.quantitize_cfg(
+        nfp.quant.quantize_cfg(
             bn.running_var,
             **{
                 "method": nfp.FIX_AUTO,
@@ -78,14 +78,14 @@ def test_fix_bn_test_auto(case):
     out = bn(inputs)
     assert (out == out_fix).all()
 
-    # TEST: the running mean/var update is on the quantitized running mean
+    # TEST: the running mean/var update is on the quantized running mean
     bn_fix.train()
     bn.train()
     out_fix = bn_fix(inputs)
     out = bn(inputs)
     assert (
         bn.running_mean == bn_fix.running_mean
-    ).all()  # quantitized on the next forward
+    ).all()  # quantized on the next forward
     assert (bn.running_var == bn_fix.running_var).all()
 
     # runnig_mean_should = np.mean(inputs.detach().numpy(), axis=0) * case["momentum"]

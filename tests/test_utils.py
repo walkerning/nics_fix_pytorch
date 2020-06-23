@@ -48,20 +48,20 @@ def test_save_state_dict(tmp_path):
     model = nn.Sequential(*[
         nnf.Conv2d_fix(3, 10, kernel_size=3, padding=1,
                        nf_fix_params=_generate_default_fix_cfg(
-                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
                            method=nfp.FIX_FIXED)),
         nnf.Conv2d_fix(10, 20, kernel_size=3, padding=1,
                        nf_fix_params=_generate_default_fix_cfg(
-                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
                            method=nfp.FIX_FIXED)),
         nnf.Activation_fix(
             nf_fix_params=_generate_default_fix_cfg(
-                ["activation"], scale=np.random.randint(low=-10, high=10),
+                ["activation"], scale=2.**np.random.randint(low=-10, high=10),
                 method=nfp.FIX_FIXED)),
         nn.AdaptiveAvgPool2d(1),
         _View(),
         nnf.Linear_fix(20, 10, nf_fix_params=_generate_default_fix_cfg(
-            ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+            ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
             method=nfp.FIX_FIXED))
     ])
     model.cuda()
@@ -70,26 +70,26 @@ def test_save_state_dict(tmp_path):
     model2 = nn.Sequential(*[
         nnf.Conv2d_fix(3, 10, kernel_size=3, padding=1,
                        nf_fix_params=_generate_default_fix_cfg(
-                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
                            method=nfp.FIX_FIXED)),
         nnf.Conv2d_fix(10, 20, kernel_size=3, padding=1,
                        nf_fix_params=_generate_default_fix_cfg(
-                           ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+                           ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
                            method=nfp.FIX_FIXED)),
         nnf.Activation_fix(
             nf_fix_params=_generate_default_fix_cfg(
-                ["activation"], scale=np.random.randint(low=-10, high=10),
+                ["activation"], scale=2.**np.random.randint(low=-10, high=10),
                 method=nfp.FIX_FIXED)),
         nn.AdaptiveAvgPool2d(1),
         _View(),
         nnf.Linear_fix(20, 10, nf_fix_params=_generate_default_fix_cfg(
-            ["weight", "bias"], scale=np.random.randint(low=-10, high=10),
+            ["weight", "bias"], scale=2.**np.random.randint(low=-10, high=10),
             method=nfp.FIX_FIXED))
     ])
     model2.cuda()
     model2.load_state_dict(torch.load(ckpt))
     post_results = model2(data)
-    assert (post_results - pre_results < 1e-3).all()
+    assert (post_results - pre_results < 1e-2).all()
 
 
 def test_fix_state_dict(module_cfg):
@@ -105,7 +105,7 @@ def test_fix_state_dict(module_cfg):
     res = module.forward(torch.tensor([0, 0, 0]).float())
     dct = FixTopModule.fix_state_dict(module)
     dct_vars = FixTopModule.fix_state_dict(module, keep_vars=True)
-    quantized, _ = nfpq.quantitize_cfg(module._parameters["param"], **cfg["param"])
+    quantized, _ = nfpq.quantize_cfg(module._parameters["param"], **cfg["param"])
     dct_vars = FixTopModule.fix_state_dict(module, keep_vars=True)
     assert (dct["param"] == quantized).all()  # already fixed
     assert (dct_vars["param"] == quantized).all()  # already fixed

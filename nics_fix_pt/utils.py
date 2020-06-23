@@ -74,7 +74,7 @@ def _generate_default_fix_cfg(names, scale=0, bitwidth=8, method=0):
                 torch.IntTensor(np.array([method])), requires_grad=False
             ),
             "scale": torch.autograd.Variable(
-                torch.IntTensor(np.array([scale])), requires_grad=False
+                torch.FloatTensor(np.array([scale])), requires_grad=False
             ),
             "bitwidth": torch.autograd.Variable(
                 torch.IntTensor(np.array([bitwidth])), requires_grad=False
