@@ -77,7 +77,7 @@ You can modify the config tensors in place to change the behavior.
 
 Tested with Python 2.7, 3.5, 3.6.1+.
 
-Pytorch 0.4.1, 1.0.0, 1.1.0.
+Pytorch 0.4.1, 1.0.0, 1.1.0, 1.4.0.  Note that fixed-point simulation using DataParallel with Pytorch>=1.5.0 versions are not supported now!
 
 ![coverage percentage](./coverage.svg)
 

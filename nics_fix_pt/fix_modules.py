@@ -24,6 +24,7 @@ def _get_kwargs(self, true_kwargs):
     kwargs.update(true_kwargs)
     return kwargs
 
+
 def _get_fix_cfg(self, name, grad=False):
     if not grad:
         cfg = self.nf_fix_params.get(name, {})
@@ -35,44 +36,62 @@ def _get_fix_cfg(self, name, grad=False):
             cfg["scale"] = self._buffers["{}_grad_fp_scale".format(name)]
     return cfg
 
+
 def _register_fix_buffers(self, patch_register=True):
     # register scale tensors as buffers, for correct use in multi-gpu data parallel model
     avail_keys = list(self._parameters.keys()) + list(self._buffers.keys())
     for name, cfg in six.iteritems(self.nf_fix_params):
         if patch_register and name not in avail_keys:
-            warnings.warn(("{} not available in {}, this specific fixed config "
-                           "will not have effects").format(name, self))
+            warnings.warn(
+                (
+                    "{} not available in {}, this specific fixed config "
+                    "will not have effects"
+                ).format(name, self)
+            )
         if "scale" in cfg:
             self.register_buffer("{}_fp_scale".format(name), cfg["scale"])
 
     avail_keys = list(self._parameters.keys())
     for name, cfg in six.iteritems(self.nf_fix_params_grad):
         if patch_register and name not in avail_keys:
-            warnings.warn(("{} not available in {}, this specific grads fixed config "
-                           "will not have effects").format(name, self))
+            warnings.warn(
+                (
+                    "{} not available in {}, this specific grads fixed config "
+                    "will not have effects"
+                ).format(name, self)
+            )
         if "scale" in cfg:
             self.register_buffer("{}_grad_fp_scale".format(name), cfg["scale"])
 
+
 # --------
 
+
 def get_fix_forward(cur_cls):
-    #pylint: disable=protected-access
+    # pylint: disable=protected-access
     def fix_forward(self, inputs, **kwargs):
         if not isinstance(inputs, dict):
             inputs = {"inputs": inputs}
         for n, param in six.iteritems(self._parameters):
+            # NOTE: Since Pytorch>=1.5.0, parameters in DataParallel replica are no longer
+            # registered in the _parameters dict, so this mechanism will no longer work.
+            # Thus for now, only Pytorch<1.5.0 versions are supported if DataParallel is used!
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
             fix_cfg = _get_fix_cfg(self, n)
             fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
-            set_n, _ = quant.quantize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantize(
+                param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n
+            )
             object.__setattr__(self, n, set_n)
         for n, param in six.iteritems(self._buffers):
             if not isinstance(param, (torch.Tensor, torch.autograd.Variable)):
                 continue
             fix_cfg = _get_fix_cfg(self, n)
             fix_grad_cfg = _get_fix_cfg(self, n, grad=True)
-            set_n, _ = quant.quantize(param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n)
+            set_n, _ = quant.quantize(
+                param, fix_cfg, fix_grad_cfg, kwarg_cfg=inputs, name=n
+            )
             object.__setattr__(self, n, set_n)
         res = super(cur_cls, self).forward(inputs["inputs"], **kwargs)
         for n, param in six.iteritems(self._buffers):
@@ -85,6 +104,7 @@ def get_fix_forward(cur_cls):
             if updated_buffer is not self._buffers[n]:
                 self._buffers[n].copy_(updated_buffer)
         return res
+
     return fix_forward
 
 
@@ -152,10 +172,23 @@ class Activation_fix(Module):
         )
         return self.activation
 
+
 class ConvBN_fix(Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1,
-                padding=0, dilation=1, groups=1,
-                eps=1e-05, momentum=0.1, affine=True, track_running_stats=True, **kwargs):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        stride=1,
+        padding=0,
+        dilation=1,
+        groups=1,
+        eps=1e-05,
+        momentum=0.1,
+        affine=True,
+        track_running_stats=True,
+        **kwargs
+    ):
         super(ConvBN_fix, self).__init__()
         kwargs = _get_kwargs(self, kwargs)
         assert "nf_fix_params" in kwargs and isinstance(
@@ -175,8 +208,18 @@ class ConvBN_fix(Module):
 
         # init the two floating-point sub-modules
         self.conv = torch.nn.Conv2d(
-            in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias=False)
-        self.bn = torch.nn.BatchNorm2d(out_channels, eps, momentum, affine, track_running_stats)
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            groups,
+            bias=False,
+        )
+        self.bn = torch.nn.BatchNorm2d(
+            out_channels, eps, momentum, affine, track_running_stats
+        )
 
         # conv and bn attributes
         self.stride = stride
@@ -217,21 +260,40 @@ class ConvBN_fix(Module):
         bn_bias = self.bn.bias
         bn_eps = self.bn.eps
         conv_weight = self.conv.weight
-        conv_bias = self.conv.bias or 0. # could be None
+        conv_bias = self.conv.bias or 0.0  # could be None
 
         # combine new weights/bias
-        comb_weight = conv_weight * (bn_scale / torch.sqrt(var + bn_eps)).view(-1, 1, 1, 1)
+        comb_weight = conv_weight * (bn_scale / torch.sqrt(var + bn_eps)).view(
+            -1, 1, 1, 1
+        )
         comb_bias = bn_bias + (conv_bias - mean) * bn_scale / torch.sqrt(var + bn_eps)
 
         # quantize the combined weights/bias (as what would be done in hardware deploy scenario)
-        comb_weight, _ = quant.quantize(comb_weight, self.nf_fix_params.get("weight", {}), {},
-                                          kwarg_cfg=inputs, name="weight")
-        comb_bias, _ = quant.quantize(comb_bias, self.nf_fix_params.get("bias", {}), {},
-                                        kwarg_cfg=inputs, name="bias")
+        comb_weight, _ = quant.quantize(
+            comb_weight,
+            self.nf_fix_params.get("weight", {}),
+            {},
+            kwarg_cfg=inputs,
+            name="weight",
+        )
+        comb_bias, _ = quant.quantize(
+            comb_bias,
+            self.nf_fix_params.get("bias", {}),
+            {},
+            kwarg_cfg=inputs,
+            name="bias",
+        )
 
         # run the fixed-point combined convbn
-        convbn_out = F.conv2d(inputs["inputs"], comb_weight, comb_bias,
-                              self.stride, self.padding, self.dilation, self.groups)
+        convbn_out = F.conv2d(
+            inputs["inputs"],
+            comb_weight,
+            comb_bias,
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
         object.__setattr__(self, "weight", comb_weight)
         object.__setattr__(self, "bias", comb_bias)
         return convbn_out
@@ -423,7 +485,9 @@ class FixTopModule(Module):
                     )
 
     @staticmethod
-    def set_fix_method(self, method=None, method_by_type=None, method_by_name=None, grad=False):
+    def set_fix_method(
+        self, method=None, method_by_type=None, method_by_name=None, grad=False
+    ):
         for module_name, module in six.iteritems(self._modules):
             if isinstance(module.__class__, FixMeta) or isinstance(
                 module, Activation_fix
@@ -432,24 +496,31 @@ class FixTopModule(Module):
                     module, "nf_fix_params" if not grad else "nf_fix_params_grad"
                 )
                 if method_by_name is not None and module_name in method_by_name:
-                    for param_n, param_method in six.iteritems(method_by_name[module_name]):
-                        assert param_n in fix_params, \
-                            "{} is not a quantized parameter of module {}".format(
-                                param_n, module_name)
+                    for param_n, param_method in six.iteritems(
+                        method_by_name[module_name]
+                    ):
+                        assert (
+                            param_n in fix_params
+                        ), "{} is not a quantized parameter of module {}".format(
+                            param_n, module_name
+                        )
                         _set_method(fix_params[param_n], param_method)
                 else:
                     if method_by_type is not None:
                         param_method_cfg = method_by_type.get(
                             type(module).__name__,
-                            method_by_type.get(type(module), None))
+                            method_by_type.get(type(module), None),
+                        )
                     else:
                         param_method_cfg = None
                     if param_method_cfg is not None:
                         # specifiedd by method_by_type
                         for param_n, param_method in six.iteritems(param_method_cfg):
-                            assert param_n in fix_params, \
-                                "{} is not a quantized parameter of module {}".format(
-                                    param_n, module_name)
+                            assert (
+                                param_n in fix_params
+                            ), "{} is not a quantized parameter of module {}".format(
+                                param_n, module_name
+                            )
                             _set_method(fix_params[param_n], param_method)
                     elif method is not None:
                         for param_n in fix_params:
@@ -458,6 +529,7 @@ class FixTopModule(Module):
                 module.set_fix_method(method, grad=grad)
             else:
                 FixTopModule.set_fix_method(module, method, grad=grad)
+
 
 # helpers
 def _set_method(param_cfg, new_method):
